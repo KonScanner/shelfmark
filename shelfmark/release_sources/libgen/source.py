@@ -146,6 +146,7 @@ class LibgenSource(ReleaseSource):
                 "year": record.year,
                 "md5": record.id,
                 "language": record.language,
+                "preview": record.preview,
             },
         )
 

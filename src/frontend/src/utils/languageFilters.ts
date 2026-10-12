@@ -3,30 +3,6 @@ import type { Language } from '../types';
 export const LANGUAGE_OPTION_DEFAULT = 'default';
 export const LANGUAGE_OPTION_ALL = 'all';
 
-export const normalizeLanguageSelection = (selected: string[]): string[] => {
-  const sanitized = (selected ?? []).filter(Boolean);
-
-  if (sanitized.length === 0) {
-    return [LANGUAGE_OPTION_DEFAULT];
-  }
-
-  const unique: string[] = [];
-  const seen = new Set<string>();
-
-  for (const value of sanitized) {
-    if (!seen.has(value)) {
-      unique.push(value);
-      seen.add(value);
-    }
-  }
-
-  if (unique.includes(LANGUAGE_OPTION_ALL)) {
-    return [LANGUAGE_OPTION_ALL];
-  }
-
-  return unique.length ? unique : [LANGUAGE_OPTION_DEFAULT];
-};
-
 /**
  * Resolve the language codes the "Default" filter option stands for.
  *
@@ -43,6 +19,82 @@ export const resolveDefaultLanguageCodes = (
     return configuredDefault;
   }
   return [supportedLanguages[0]?.code || 'en'];
+};
+
+/**
+ * True when the configured default applies no language filter: an explicitly empty list,
+ * or BOOK_LANGUAGE=all. Treating "all" as a language code made the multi-select jump back
+ * to every language on each click.
+ */
+const defaultCoversAllLanguages = (defaultCodes: string[]): boolean =>
+  defaultCodes.length === 0 || defaultCodes.includes(LANGUAGE_OPTION_ALL);
+
+/**
+ * Resolve a language selection to the codes a multi-select shows checked, in option order.
+ * An empty selection checks nothing; it only occurs when the default covers all languages.
+ */
+export const getCheckedLanguageCodes = (
+  selection: string[],
+  optionCodes: string[],
+  defaultCodes: string[],
+): string[] => {
+  if (selection.includes(LANGUAGE_OPTION_ALL)) {
+    return [...optionCodes];
+  }
+
+  const defaultExpansion = defaultCoversAllLanguages(defaultCodes) ? optionCodes : defaultCodes;
+  const checked = new Set(
+    selection.flatMap((value) => (value === LANGUAGE_OPTION_DEFAULT ? defaultExpansion : [value])),
+  );
+  return optionCodes.filter((code) => checked.has(code));
+};
+
+/**
+ * Apply one click on a language multi-select option and return the new selection.
+ *
+ * A click on a language toggles only that language, so the user can narrow "All languages"
+ * one language at a time or build a list from nothing. A click on "All languages" selects
+ * everything, or clears the list when everything is already selected.
+ */
+export const toggleLanguageSelection = (
+  selection: string[],
+  clicked: string,
+  optionCodes: string[],
+  defaultCodes: string[],
+): string[] => {
+  const defaultIsAll = defaultCoversAllLanguages(defaultCodes);
+  // Prefer the untouched default when it already means every language, so the filter
+  // badge and the URL stay clean.
+  const everyLanguage = defaultIsAll ? [LANGUAGE_OPTION_DEFAULT] : [LANGUAGE_OPTION_ALL];
+  // An empty selection means "use the default", so only a default that covers all
+  // languages can show an empty list without it snapping back.
+  const nothingSelected = defaultIsAll ? [] : [LANGUAGE_OPTION_DEFAULT];
+
+  const checked = new Set(getCheckedLanguageCodes(selection, optionCodes, defaultCodes));
+  const allChecked = optionCodes.length > 0 && checked.size === optionCodes.length;
+
+  if (clicked === LANGUAGE_OPTION_ALL) {
+    return allChecked ? nothingSelected : everyLanguage;
+  }
+
+  if (checked.has(clicked)) {
+    checked.delete(clicked);
+  } else {
+    checked.add(clicked);
+  }
+  const next = optionCodes.filter((code) => checked.has(code));
+
+  if (next.length === 0) {
+    return nothingSelected;
+  }
+  if (next.length === optionCodes.length) {
+    return everyLanguage;
+  }
+  const defaultSet = new Set(defaultCodes);
+  if (!defaultIsAll && next.length === defaultSet.size && next.every((c) => defaultSet.has(c))) {
+    return [LANGUAGE_OPTION_DEFAULT];
+  }
+  return next;
 };
 
 export const getLanguageFilterValues = (

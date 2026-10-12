@@ -113,8 +113,14 @@ def run_warmup() -> bool:
     try:
         from shelfmark.core.models import SearchFilters
         from shelfmark.release_sources.direct_download import search_books
+        from shelfmark.release_sources.direct_download.annas_archive import (
+            download_counts_disabled,
+        )
 
-        results, _ = search_books(query, SearchFilters())
+        # Only the cold path needs paying here; 50 download-count lookups for a query
+        # nobody will look at would just compete with the user's first real search.
+        with download_counts_disabled():
+            results, _ = search_books(query, SearchFilters())
     except Exception:
         # Broad by design: a warm-up must never take the app down, and the source
         # raises everything from network errors to parse failures.

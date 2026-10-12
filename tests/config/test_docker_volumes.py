@@ -104,3 +104,37 @@ def test_save_config_file_returns_false_when_config_dir_is_not_writable(tmp_path
             assert save_config_file("downloads", {"key": "value"}) is False
     finally:
         config_dir.chmod(stat.S_IRWXU)
+
+
+def test_covers_cache_writability_probe_is_reused(tmp_path: Path):
+    """Per-result cover checks must not create and delete a probe file on every call."""
+    from unittest.mock import patch
+
+    from shelfmark.config import env
+
+    first_dir = tmp_path / "first"
+    first_dir.mkdir()
+    second_dir = tmp_path / "second"
+    second_dir.mkdir()
+    env._writable_probe_cache.clear()
+
+    with (
+        pytest.MonkeyPatch.context() as monkeypatch,
+        patch.object(env, "_is_config_dir_writable", return_value=True) as probe,
+    ):
+        monkeypatch.setattr("shelfmark.config.env.CONFIG_DIR", first_dir)
+        for _ in range(50):
+            assert env._is_config_dir_writable_cached() is True
+        assert probe.call_count == 1
+
+        monkeypatch.setattr("shelfmark.config.env.CONFIG_DIR", second_dir)
+        assert env._is_config_dir_writable_cached() is True
+        assert probe.call_count == 2
+
+        monkeypatch.setattr(env, "_WRITABLE_PROBE_TTL_SECONDS", 0.0)
+        env._writable_probe_cache.clear()
+        env._is_config_dir_writable_cached()
+        env._is_config_dir_writable_cached()
+        assert probe.call_count == 4
+
+    env._writable_probe_cache.clear()
