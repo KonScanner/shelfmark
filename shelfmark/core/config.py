@@ -124,9 +124,16 @@ class Config:
         self._field_map.clear()
         self._cache.clear()
 
+        # Read each tab file once: resolving ~300 fields with one file open and json.load
+        # apiece made every refresh (several per metadata request) a burst of disk I/O.
+        tab_files: dict[str, dict[str, Any]] = {}
         for key, (field, tab_name) in registry.get_settings_field_map().items():
             self._field_map[key] = (field, tab_name)
-            self._cache[key] = registry.get_setting_value(field, tab_name)
+            if tab_name not in tab_files:
+                tab_files[tab_name] = registry.load_config_file(tab_name)
+            self._cache[key] = registry.get_setting_value(
+                field, tab_name, file_values=tab_files[tab_name]
+            )
 
         self._loaded = True
 
@@ -150,8 +157,10 @@ class Config:
             self._load_settings()
         with self._user_settings_cache_lock:
             self._user_settings_cache.clear()
-        self._user_db = None
-        self._user_db_load_attempted = False
+        # Keep a working UserDB handle: re-opening it runs the schema setup (a write
+        # transaction) on every refresh. Only a failed open is retried.
+        if self._user_db is None:
+            self._user_db_load_attempted = False
         self._last_refresh_time = time.monotonic()
 
     def _get_user_db(self) -> UserDB | None:

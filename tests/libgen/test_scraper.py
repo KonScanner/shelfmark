@@ -24,6 +24,39 @@ def test_parse_results_full_row_fields():
     assert a.source_url == f"https://libgen.li/ads.php?md5={html.MD5_A}"
 
 
+def test_parse_results_cover_column_becomes_preview():
+    records = scraper._parse_results(html.SEARCH_HTML_WITH_COVERS, "https://libgen.li")
+    assert records is not None
+    full, _compact = records
+    assert full.preview == f"https://libgen.li/covers/467000/{html.MD5_A}_small.jpg"
+    assert full.title == "One Piece, Vol. 1"
+    assert full.author == "Eiichiro Oda"
+    assert full.language == "en"
+    assert full.format == "epub"
+    assert full.size == "180 MB"
+
+
+def test_parse_results_empty_cover_cell_is_not_the_title():
+    records = scraper._parse_results(html.SEARCH_HTML_WITH_COVERS, "https://libgen.li")
+    compact = records[1]
+    assert compact.preview is None
+    assert compact.title == "One Piece 515"
+    assert compact.format == "cbr"
+    assert compact.size == "6 MB"
+
+
+def test_search_libgen_requests_covers():
+    calls = []
+
+    def fake_fetch(url, timeout=(5, 15)):
+        calls.append(url)
+        return html.SEARCH_HTML
+
+    with patch.object(scraper, "fetch_page", side_effect=fake_fetch):
+        scraper.search_libgen("one piece", ["https://libgen.li"], max_results=25)
+    assert calls[0].endswith("&covers=on")
+
+
 def test_parse_results_md5_scoped_to_mirrors_cell():
     # Row A's Title cell carries a decoy md5-shaped cover URL that appears BEFORE the real
     # md5 in document order; the parser must resolve to the Mirrors-cell md5, not the decoy.

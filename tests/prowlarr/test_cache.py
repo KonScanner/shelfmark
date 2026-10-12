@@ -120,3 +120,20 @@ class TestProwlarrCache:
             t.join()
 
         assert len(errors) == 0, f"Thread errors: {errors}"
+
+
+def test_cache_release_prunes_expired_entries_on_insert():
+    """Releases nobody looks up again must not stay in memory forever."""
+    with cache._cache_lock:
+        cache._cache.clear()
+    cache.cache_release("stale", {"title": "Stale"})
+    past = time.time() - cache.RELEASE_CACHE_TTL - 1
+    cache._cache["stale"] = (cache._cache["stale"][0], past)
+    cache._prune_state["last"] = 0.0
+
+    cache.cache_release("fresh", {"title": "Fresh"})
+
+    assert "stale" not in cache._cache
+    assert cache.get_release("fresh") == {"title": "Fresh"}
+    with cache._cache_lock:
+        cache._cache.clear()

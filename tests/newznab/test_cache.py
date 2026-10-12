@@ -91,3 +91,26 @@ class TestCleanupExpired:
 
     def test_returns_zero_when_cache_empty(self):
         assert cleanup_expired() == 0
+
+
+class TestPruneOnInsert:
+    def test_cache_release_drops_expired_entries(self):
+        cache_release("stale", {"title": "Stale"})
+        past = time.time() - cache_module.RELEASE_CACHE_TTL - 1
+        cache_module._cache["stale"] = (cache_module._cache["stale"][0], past)
+        cache_module._prune_state["last"] = 0.0
+
+        cache_release("fresh", {"title": "Fresh"})
+
+        assert "stale" not in cache_module._cache
+        assert "fresh" in cache_module._cache
+
+    def test_prune_runs_at_most_once_per_interval(self):
+        cache_module._prune_state["last"] = time.time()
+        cache_release("stale", {"title": "Stale"})
+        past = time.time() - cache_module.RELEASE_CACHE_TTL - 1
+        cache_module._cache["stale"] = (cache_module._cache["stale"][0], past)
+
+        cache_release("fresh", {"title": "Fresh"})
+
+        assert "stale" in cache_module._cache

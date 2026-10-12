@@ -1,8 +1,8 @@
 import type { Language } from '../types';
 import {
   LANGUAGE_OPTION_ALL,
-  LANGUAGE_OPTION_DEFAULT,
-  normalizeLanguageSelection,
+  getCheckedLanguageCodes,
+  toggleLanguageSelection,
 } from '../utils/languageFilters';
 import type { DropdownListOption } from './DropdownList';
 import { DropdownList } from './DropdownList';
@@ -30,11 +30,7 @@ export const LanguageMultiSelect = ({
   const defaultLanguages = options.filter((lang) => defaultCodeSet.has(lang.code));
   const nonDefaultLanguages = options.filter((lang) => !defaultCodeSet.has(lang.code));
 
-  // All selectable values (individual language codes, not LANGUAGE_OPTION_DEFAULT)
-  const selectableValues = [
-    ...defaultLanguageCodes,
-    ...nonDefaultLanguages.map((lang) => lang.code),
-  ];
+  const optionCodes = options.map((lang) => lang.code);
 
   // Build option list: All, then defaults (marked), then others
   const optionList: DropdownListOption[] = [
@@ -54,16 +50,10 @@ export const LanguageMultiSelect = ({
     })),
   ];
 
-  // Expand LANGUAGE_OPTION_DEFAULT to individual default codes for comparison
-  const expandedValue = value.flatMap((v) =>
-    v === LANGUAGE_OPTION_DEFAULT ? defaultLanguageCodes : [v],
-  );
-
-  const includesAllSelection = value.includes(LANGUAGE_OPTION_ALL);
-  const effectiveValue = includesAllSelection ? selectableValues : expandedValue;
-  const selectedSet = new Set(effectiveValue);
-  const isAllSelected = selectableValues.every((code) => selectedSet.has(code));
-  const displayedValue = isAllSelected ? [LANGUAGE_OPTION_ALL, ...effectiveValue] : effectiveValue;
+  const checkedCodes = getCheckedLanguageCodes(value, optionCodes, defaultLanguageCodes);
+  const selectedSet = new Set(checkedCodes);
+  const isAllSelected = optionCodes.length > 0 && checkedCodes.length === optionCodes.length;
+  const displayedValue = isAllSelected ? [LANGUAGE_OPTION_ALL, ...checkedCodes] : checkedCodes;
 
   const summaryFormatter = (_selected: DropdownListOption[], fallback: string) => {
     if (isAllSelected) {
@@ -80,7 +70,7 @@ export const LanguageMultiSelect = ({
     });
 
     if (labels.length === 0) {
-      return placeholder || fallback;
+      return placeholder || fallback || 'Choose languages';
     }
 
     if (labels.length === 1) {
@@ -92,23 +82,17 @@ export const LanguageMultiSelect = ({
     return `${first}, ${second ?? ''}${suffix}`.trim();
   };
 
+  // DropdownList reports the whole next list; the one value that differs is the click.
   const handleChange = (nextValue: string[] | string) => {
     const nextArray = Array.isArray(nextValue) ? nextValue : [nextValue];
-    const includesAll = nextArray.includes(LANGUAGE_OPTION_ALL);
-    const toggledAllOn = includesAll && !isAllSelected;
-    const toggledAllOff =
-      isAllSelected && !includesAll && nextArray.length === effectiveValue.length;
-
-    let resolved = nextArray.filter((code) => code !== LANGUAGE_OPTION_ALL);
-
-    if (toggledAllOn) {
-      resolved = [LANGUAGE_OPTION_ALL];
-    } else if (toggledAllOff) {
-      resolved = [];
+    const shown = new Set(displayedValue);
+    const next = new Set(nextArray);
+    const clicked =
+      nextArray.find((code) => !shown.has(code)) ?? displayedValue.find((code) => !next.has(code));
+    if (clicked === undefined) {
+      return;
     }
-
-    const normalized = normalizeLanguageSelection(resolved);
-    onChange(normalized);
+    onChange(toggleLanguageSelection(value, clicked, optionCodes, defaultLanguageCodes));
   };
 
   return (

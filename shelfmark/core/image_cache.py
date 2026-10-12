@@ -1,20 +1,18 @@
 """Disk-based image cache with LRU eviction."""
 
-import ipaddress
 import json
-import socket
 import threading
 import time
 from http import HTTPStatus
 from io import BytesIO
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlsplit
 
 import requests
 
 from shelfmark.core.logger import setup_logger
 from shelfmark.core.request_helpers import coerce_int
-from shelfmark.download.network import get_ssl_verify
+from shelfmark.download.network import get_proxies, get_ssl_verify, prepare_public_url
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -37,6 +35,17 @@ FETCH_HEADERS = {
     "Accept-Language": "en-US,en;q=0.5",
 }
 
+
+def _fetch_headers(url: str) -> dict[str, str]:
+    """Fetch headers with a same-origin Referer.
+
+    Some cover hosts (libgen.li) answer a request without a Referer with an empty 200
+    image. The host already knows its own origin, so this Referer leaks nothing.
+    """
+    parts = urlsplit(url)
+    return {**FETCH_HEADERS, "Referer": f"{parts.scheme}://{parts.netloc}/"}
+
+
 # Maximum image size to fetch (5 MB)
 MAX_IMAGE_SIZE = 5 * 1024 * 1024
 MAX_REDIRECTS = 5
@@ -47,6 +56,10 @@ NEGATIVE_CACHE_TTL = 3600
 # Transient failure cache TTL (for timeouts/connection errors) - 60 seconds
 # Short enough to retry soon, long enough to prevent spam during one page view
 TRANSIENT_CACHE_TTL = 60
+
+# How stale a cache hit's on-disk access time may get before the index is rewritten -
+# 1 hour. LRU eviction across restarts only needs this granularity.
+ACCESS_PERSIST_INTERVAL = 3600
 
 _MIN_WEBP_HEADER_LENGTH = 12
 HTTP_NOT_FOUND = HTTPStatus.NOT_FOUND
@@ -91,6 +104,9 @@ class ImageCacheService:
         self.index_path = cache_dir / "cache_index.json"
         self._lock = threading.RLock()
         self._index: dict[str, dict[str, Any]] = {}
+        # mtime of the index file as last loaded or written by this process, so a miss
+        # only re-parses the file when someone else changed it.
+        self._index_mtime_ns: int | None = None
 
         # Stats tracking
         self._hits = 0
@@ -103,10 +119,17 @@ class ImageCacheService:
         self._load_index()
         self._sync_index_with_files()
 
+    def _index_file_mtime_ns(self) -> int | None:
+        try:
+            return self.index_path.stat().st_mtime_ns
+        except OSError:
+            return None
+
     def _load_index(self) -> None:
         """Load cache index from disk."""
         if not self.index_path.exists():
             self._index = {}
+            self._index_mtime_ns = None
             return
 
         try:
@@ -114,6 +137,12 @@ class ImageCacheService:
                 self._index = json.load(f)
         except OSError, json.JSONDecodeError:
             self._index = {}
+        self._index_mtime_ns = self._index_file_mtime_ns()
+
+    def _reload_index_if_changed(self) -> None:
+        """Re-read the index only when the file changed since this process last saw it."""
+        if self._index_file_mtime_ns() != self._index_mtime_ns:
+            self._load_index()
 
     def _sync_index_with_files(self) -> None:
         """Sync cache index with actual files on disk.
@@ -186,6 +215,8 @@ class ImageCacheService:
             temp_path.rename(self.index_path)
         except OSError:
             pass
+        else:
+            self._index_mtime_ns = self._index_file_mtime_ns()
 
     def _get_image_path(self, cache_id: str, ext: str) -> Path:
         """Get the file path for a cached image."""
@@ -265,7 +296,7 @@ class ImageCacheService:
 
             # Try reloading from disk if not found (handles multiprocess case)
             if not entry:
-                self._load_index()
+                self._reload_index_if_changed()
                 entry = self._index.get(cache_id)
                 if not entry:
                     self._misses += 1
@@ -314,9 +345,15 @@ class ImageCacheService:
                 with image_path.open("rb") as f:
                     data = f.read()
 
-                # Update accessed time
-                entry["accessed_at"] = time.time()
-                self._save_index()
+                # Update accessed time. Eviction reads the in-memory index, so it stays
+                # exact; the file only needs it coarsely (for LRU across restarts), and
+                # rewriting the whole index on every cover hit is what made a results page
+                # of cached covers serialise behind the lock.
+                now = time.time()
+                previous_access = entry.get("accessed_at", 0)
+                entry["accessed_at"] = now
+                if now - previous_access >= ACCESS_PERSIST_INTERVAL:
+                    self._save_index()
                 result = data, content_type
 
             except OSError:
@@ -485,44 +522,7 @@ class ImageCacheService:
     @staticmethod
     def _prepare_safe_url(url: str) -> str | None:
         """Prepare and validate a URL before fetching it."""
-        if "\\" in url or any(ord(char) < 32 for char in url):
-            return None
-
-        try:
-            prepared = requests.Request("GET", url).prepare()
-            prepared_url = prepared.url
-            if not isinstance(prepared_url, str):
-                return None
-            parsed = urlparse(prepared_url)
-            hostname = parsed.hostname
-        except requests.exceptions.RequestException, ValueError:
-            return None
-
-        if not prepared_url:
-            return None
-
-        if "\\" in prepared_url or any(ord(char) < 32 for char in prepared_url):
-            return None
-
-        netloc_lower = parsed.netloc.lower()
-        if "%2f" in netloc_lower or "%5c" in netloc_lower:
-            return None
-
-        if parsed.scheme not in ("http", "https"):
-            return None
-        if not hostname:
-            return None
-
-        try:
-            resolved = socket.getaddrinfo(hostname, None)
-            for _, _, _, _, sockaddr in resolved:
-                ip = ipaddress.ip_address(sockaddr[0])
-                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-                    return None
-        except socket.gaierror, ValueError:
-            return None
-
-        return prepared_url
+        return prepare_public_url(url)
 
     @staticmethod
     def _is_safe_url(url: str) -> bool:
@@ -540,9 +540,10 @@ class ImageCacheService:
             response = requests.get(
                 current_url,
                 timeout=(5, 10),
-                headers=FETCH_HEADERS,
+                headers=_fetch_headers(current_url),
                 stream=True,
                 verify=get_ssl_verify(current_url),
+                proxies=get_proxies(current_url),
                 allow_redirects=False,
             )
 

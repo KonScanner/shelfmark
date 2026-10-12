@@ -5,10 +5,12 @@ import {
   LANGUAGE_OPTION_ALL,
   LANGUAGE_OPTION_DEFAULT,
   buildLanguageNormalizer,
+  getCheckedLanguageCodes,
   getLanguageFilterValues,
   getReleaseSearchLanguageParams,
   releaseLanguageMatchesFilter,
   resolveDefaultLanguageCodes,
+  toggleLanguageSelection,
 } from '../utils/languageFilters';
 
 const supportedLanguages: Language[] = [
@@ -119,5 +121,94 @@ describe('resolveDefaultLanguageCodes', () => {
     expect(
       getReleaseSearchLanguageParams([LANGUAGE_OPTION_DEFAULT, 'de'], supportedLanguages, defaults),
     ).toEqual(['de']);
+  });
+});
+
+describe('toggleLanguageSelection', () => {
+  const codes = supportedLanguages.map((lang) => lang.code);
+
+  describe('with BOOK_LANGUAGE=all', () => {
+    const defaults = [LANGUAGE_OPTION_ALL];
+
+    it('shows the untouched default as every language checked', () => {
+      expect(getCheckedLanguageCodes([LANGUAGE_OPTION_DEFAULT], codes, defaults)).toEqual(codes);
+    });
+
+    it('removes one language from the full list and keeps the rest', () => {
+      const next = toggleLanguageSelection([LANGUAGE_OPTION_DEFAULT], 'en', codes, defaults);
+      expect(next).toEqual(['de', 'hu']);
+      expect(toggleLanguageSelection(next, 'de', codes, defaults)).toEqual(['hu']);
+    });
+
+    it('clears the list when "All languages" is unchecked, then builds a list one by one', () => {
+      const cleared = toggleLanguageSelection(
+        [LANGUAGE_OPTION_DEFAULT],
+        LANGUAGE_OPTION_ALL,
+        codes,
+        defaults,
+      );
+      expect(cleared).toEqual([]);
+      expect(getCheckedLanguageCodes(cleared, codes, defaults)).toEqual([]);
+
+      const one = toggleLanguageSelection(cleared, 'de', codes, defaults);
+      expect(one).toEqual(['de']);
+      expect(toggleLanguageSelection(one, 'en', codes, defaults)).toEqual(['en', 'de']);
+    });
+
+    it('returns to the default once every language is checked again', () => {
+      expect(toggleLanguageSelection(['en', 'de'], 'hu', codes, defaults)).toEqual([
+        LANGUAGE_OPTION_DEFAULT,
+      ]);
+    });
+
+    it('selects every language from a partial list via "All languages"', () => {
+      expect(toggleLanguageSelection(['de'], LANGUAGE_OPTION_ALL, codes, defaults)).toEqual([
+        LANGUAGE_OPTION_DEFAULT,
+      ]);
+    });
+
+    it('keeps an empty list when the last language is unchecked', () => {
+      expect(toggleLanguageSelection(['de'], 'de', codes, defaults)).toEqual([]);
+    });
+  });
+
+  describe('with a concrete default language', () => {
+    const defaults = ['en'];
+
+    it('shows only the default checked', () => {
+      expect(getCheckedLanguageCodes([LANGUAGE_OPTION_DEFAULT], codes, defaults)).toEqual(['en']);
+    });
+
+    it('adds a language to the default', () => {
+      expect(toggleLanguageSelection([LANGUAGE_OPTION_DEFAULT], 'de', codes, defaults)).toEqual([
+        'en',
+        'de',
+      ]);
+    });
+
+    it('narrows explicit all-languages one language at a time', () => {
+      expect(toggleLanguageSelection([LANGUAGE_OPTION_ALL], 'hu', codes, defaults)).toEqual([
+        'en',
+        'de',
+      ]);
+    });
+
+    it('falls back to the default when the list becomes empty', () => {
+      expect(toggleLanguageSelection(['de'], 'de', codes, defaults)).toEqual([
+        LANGUAGE_OPTION_DEFAULT,
+      ]);
+    });
+
+    it('resets to the default when "All languages" is unchecked', () => {
+      expect(
+        toggleLanguageSelection([LANGUAGE_OPTION_ALL], LANGUAGE_OPTION_ALL, codes, defaults),
+      ).toEqual([LANGUAGE_OPTION_DEFAULT]);
+    });
+
+    it('selects every language explicitly', () => {
+      expect(
+        toggleLanguageSelection([LANGUAGE_OPTION_DEFAULT], LANGUAGE_OPTION_ALL, codes, defaults),
+      ).toEqual([LANGUAGE_OPTION_ALL]);
+    });
   });
 });
