@@ -10,6 +10,13 @@ services:
       target: shelfmark
     cap_add:
       - SYS_PTRACE
+    extra_hosts:
+      # Lets the container reach services on the Docker host by name,
+      # e.g. a SearXNG instance at http://host.docker.internal:47821.
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - path: .env
+        required: false
     environment:
       DEBUG: true
       # HIDE_LOCAL_AUTH: true

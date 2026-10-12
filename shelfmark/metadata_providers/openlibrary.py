@@ -22,7 +22,7 @@ from shelfmark.core.settings_registry import (
     register_settings,
 )
 from shelfmark.core.text_match import STOPWORDS
-from shelfmark.download.network import get_proxies, get_ssl_verify
+from shelfmark.download.network import get_proxies, get_ssl_verify, new_pooled_session
 from shelfmark.metadata_providers import (
     BookMetadata,
     DisplayField,
@@ -168,7 +168,7 @@ class OpenLibraryProvider(MetadataProvider):
 
     def __init__(self) -> None:
         """Initialize provider."""
-        self.session = requests.Session()
+        self.session = new_pooled_session(OPENLIBRARY_BASE_URL)
 
     def is_available(self) -> bool:
         """Open Library is always available (no auth required)."""

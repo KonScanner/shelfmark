@@ -1,10 +1,14 @@
-.PHONY: help install install-ci install-python-dev dev build preview frontend-typecheck frontend-lint frontend-format frontend-format-fix frontend-checks frontend-test clean up down docker-build refresh restart build-serve python-lint python-lint-fix python-format python-format-fix python-typecheck python-dead-code python-checks python-test python-test-cov e2e-platform e2e-platform-profile e2e-platform-matrix e2e-platform-full e2e-platform-build checks fix
+.PHONY: help install install-ci install-python-dev dev build preview frontend-typecheck frontend-lint frontend-format frontend-format-fix frontend-checks frontend-test clean searxng up down docker-build refresh restart build-serve python-lint python-lint-fix python-format python-format-fix python-typecheck python-dead-code python-checks python-test python-test-cov e2e-platform e2e-platform-profile e2e-platform-matrix e2e-platform-full e2e-platform-build checks fix
 
 # Frontend directory
 FRONTEND_DIR := src/frontend
 
 # Docker compose file
 COMPOSE_FILE := docker-compose.dev.yml
+
+# Local SearXNG instance (see the searxng target)
+QUIETSEARX_DIR ?= ../quietsearx
+QUIETSEARX_REPO ?= https://github.com/KonScanner/quietsearx.git
 
 # Default target
 help:
@@ -45,9 +49,10 @@ help:
 	@echo "  clean      - Remove node_modules and build artifacts"
 	@echo ""
 	@echo "Backend (Docker):"
-	@echo "  up         - Start backend services"
+	@echo "  searxng    - Clone (first use) and start local SearXNG (quietsearx)"
+	@echo "  up         - Start local SearXNG, then backend services"
 	@echo "  down       - Stop backend services"
-	@echo "  restart    - Restart backend services (no rebuild)"
+	@echo "  restart    - Recreate container (applies .env, no rebuild)"
 	@echo "  docker-build - Build Docker image"
 	@echo "  refresh    - Rebuild and restart backend services"
 
@@ -189,8 +194,20 @@ clean:
 	rm -rf $(FRONTEND_DIR)/node_modules
 	rm -rf $(FRONTEND_DIR)/dist
 
+# Start the local SearXNG instance (quietsearx) for the SearXNG release source.
+# Clones it on first use and gives it a .env with a new secret. Shelfmark reaches
+# it at http://host.docker.internal:47821. It keeps running after `make down`.
+searxng:
+	@echo "Starting local SearXNG (quietsearx)..."
+	@test -d $(QUIETSEARX_DIR) || git clone $(QUIETSEARX_REPO) $(QUIETSEARX_DIR)
+	@test -f $(QUIETSEARX_DIR)/.env || { \
+		cp $(QUIETSEARX_DIR)/.env.example $(QUIETSEARX_DIR)/.env && \
+		chmod 600 $(QUIETSEARX_DIR)/.env && \
+		echo "SEARXNG_SECRET=$$(openssl rand -hex 32)" >> $(QUIETSEARX_DIR)/.env; }
+	cd $(QUIETSEARX_DIR) && docker compose up -d
+
 # Start backend services
-up:
+up: searxng
 	@echo "Starting backend services..."
 	docker compose -f $(COMPOSE_FILE) up -d
 
@@ -205,9 +222,11 @@ docker-build:
 	docker compose -f $(COMPOSE_FILE) build
 
 # Restart backend services (no rebuild)
+# Uses up -d, not compose restart: the container env is fixed at creation,
+# so .env changes only apply when the container is recreated.
 restart:
 	@echo "Restarting backend services..."
-	docker compose -f $(COMPOSE_FILE) restart
+	docker compose -f $(COMPOSE_FILE) up -d
 
 # Rebuild and restart backend services
 refresh:

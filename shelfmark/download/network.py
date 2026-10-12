@@ -15,6 +15,7 @@ import dns.resolver
 import httpx
 import requests
 from dns.exception import DNSException
+from requests.adapters import HTTPAdapter
 
 from shelfmark.core.config import config as app_config
 from shelfmark.core.logger import setup_logger
@@ -96,6 +97,27 @@ def get_proxies(url: str = "") -> dict:
     return {}
 
 
+# One connection pool shared by the short-lived sessions that metadata providers create
+# per request: repeat calls to the same API reuse keep-alive connections instead of paying
+# DNS + TCP + TLS every time. Only the pool is shared; headers and auth stay per session.
+_SHARED_HTTP_ADAPTER = HTTPAdapter(pool_connections=16, pool_maxsize=16)
+
+
+def new_pooled_session(base_url: str) -> requests.Session:
+    """Return a session on the shared connection pool, routed through the configured proxy.
+
+    Proxies are read when the session is made; callers that build a session per request
+    therefore follow live proxy-setting changes.
+    """
+    session = requests.Session()
+    session.mount("https://", _SHARED_HTTP_ADAPTER)
+    session.mount("http://", _SHARED_HTTP_ADAPTER)
+    proxies = get_proxies(base_url)
+    if proxies:
+        session.proxies.update(proxies)
+    return session
+
+
 def get_ssl_verify(url: str = "") -> bool:
     """Return the ``verify`` value for outbound requests.
 
@@ -118,6 +140,53 @@ def get_ssl_verify(url: str = "") -> bool:
             pass
 
     return True
+
+
+def prepare_public_url(url: str) -> str | None:
+    """Return the prepared URL when it is safe to fetch on a caller's behalf, else None.
+
+    Guards server-side fetches of caller-supplied URLs (SSRF): only http(s) URLs whose
+    host resolves exclusively to public addresses pass. Callers that follow redirects
+    must run every hop through this again.
+    """
+    if "\\" in url or any(ord(char) < 32 for char in url):
+        return None
+
+    try:
+        prepared = requests.Request("GET", url).prepare()
+        prepared_url = prepared.url
+        if not isinstance(prepared_url, str):
+            return None
+        parsed = urllib.parse.urlparse(prepared_url)
+        hostname = parsed.hostname
+    except requests.exceptions.RequestException, ValueError:
+        return None
+
+    if not prepared_url:
+        return None
+
+    if "\\" in prepared_url or any(ord(char) < 32 for char in prepared_url):
+        return None
+
+    netloc_lower = parsed.netloc.lower()
+    if "%2f" in netloc_lower or "%5c" in netloc_lower:
+        return None
+
+    if parsed.scheme not in ("http", "https"):
+        return None
+    if not hostname:
+        return None
+
+    try:
+        resolved = socket.getaddrinfo(hostname, None)
+        for _, _, _, _, sockaddr in resolved:
+            ip = ipaddress.ip_address(sockaddr[0])
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return None
+    except socket.gaierror, ValueError:
+        return None
+
+    return prepared_url
 
 
 _ssl_warnings_suppressed = False

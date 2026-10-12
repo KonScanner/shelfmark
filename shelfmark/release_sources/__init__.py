@@ -510,6 +510,7 @@ _BUILTIN_SOURCE_MODULES = (
     "shelfmark.release_sources.libgen",
     "shelfmark.release_sources.newznab",
     "shelfmark.release_sources.prowlarr",
+    "shelfmark.release_sources.searxng",
     "shelfmark.release_sources.slskd",
     "shelfmark.release_sources.webshare",
 )

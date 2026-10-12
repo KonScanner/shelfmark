@@ -18,6 +18,24 @@ RELEASE_CACHE_TTL = 3600
 _cache: dict[str, tuple] = {}
 _cache_lock = Lock()
 
+# Most cached releases are never looked up again, so expiry on read alone would let the
+# cache grow for as long as Shelfmark runs. cache_release prunes, but at most this often:
+# it runs once per search result, and a full scan per insert would be quadratic.
+_PRUNE_INTERVAL_SECONDS = 60
+_prune_state = {"last": 0.0}
+
+
+def _prune_expired_locked(now: float) -> int:
+    """Drop expired entries. The caller holds ``_cache_lock``."""
+    expired_ids = [
+        source_id
+        for source_id, (_, cached_at) in _cache.items()
+        if now - cached_at > RELEASE_CACHE_TTL
+    ]
+    for source_id in expired_ids:
+        del _cache[source_id]
+    return len(expired_ids)
+
 
 def cache_release(source_id: str, release_data: dict) -> None:
     """Cache a release by its source_id.
@@ -27,8 +45,12 @@ def cache_release(source_id: str, release_data: dict) -> None:
         release_data: The full Prowlarr API result dict
 
     """
+    now = time.time()
     with _cache_lock:
-        _cache[source_id] = (release_data, time.time())
+        if now - _prune_state["last"] >= _PRUNE_INTERVAL_SECONDS:
+            _prune_expired_locked(now)
+            _prune_state["last"] = now
+        _cache[source_id] = (release_data, now)
 
 
 def get_release(source_id: str) -> dict | None:
@@ -78,18 +100,8 @@ def cleanup_expired() -> int:
         Number of entries removed
 
     """
-    current_time = time.time()
-    removed = 0
-
     with _cache_lock:
-        expired_ids = [
-            source_id
-            for source_id, (_, cached_at) in _cache.items()
-            if current_time - cached_at > RELEASE_CACHE_TTL
-        ]
-        for source_id in expired_ids:
-            del _cache[source_id]
-            removed += 1
+        removed = _prune_expired_locked(time.time())
 
     if removed:
         logger.debug("Cleaned up %s expired Prowlarr cache entries", removed)

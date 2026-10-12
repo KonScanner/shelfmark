@@ -151,8 +151,10 @@ class Config:
             self._load_settings()
         with self._user_settings_cache_lock:
             self._user_settings_cache.clear()
-        self._user_db = None
-        self._user_db_load_attempted = False
+        # Keep a working UserDB handle: re-opening it runs the schema setup (a write
+        # transaction) on every refresh. Only a failed open is retried.
+        if self._user_db is None:
+            self._user_db_load_attempted = False
         self._last_refresh_time = time.monotonic()
 
     def _get_user_db(self) -> UserDB | None:

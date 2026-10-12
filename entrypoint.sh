@@ -510,7 +510,9 @@ if [ "$DEBUG" = "true" ] && [ "$USING_EXTERNAL_BYPASSER" != "true" ]; then
     uname -a
     ulimit -a
     df -h /tmp
-    env | sort
+    # Redact secret values (and credentials in proxy URLs) before they reach the container log.
+    env | sed -E -e 's/^([^=]*(KEY|SECRET|PASSWORD|PASS|TOKEN|COOKIE)[^=]*)=.*/\1=<redacted>/' \
+        -e 's#://[^/@[:space:]]+@#://<redacted>@#' | sort
     mount
     cat /proc/cpuinfo
     echo "==========================================="

@@ -8,7 +8,7 @@ needed. All shelfmark-stateful behaviour lives in source.py/handler.py.
 
 import re
 from http import HTTPStatus
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urljoin, urlsplit
 
 import requests
 from bs4 import BeautifulSoup, Tag
@@ -117,7 +117,8 @@ def search_libgen(
     so an empty-but-well-formed answer is trusted rather than re-queried elsewhere.
     """
     for base in mirrors:
-        url = f"{base.rstrip('/')}/index.php?req={quote(query)}&res={max_results}"
+        # covers=on adds a leading thumbnail column; _parse_results skips it for the fields.
+        url = f"{base.rstrip('/')}/index.php?req={quote(query)}&res={max_results}&covers=on"
         html = fetch_page(url, timeout)
         if html is None:
             continue
@@ -168,6 +169,16 @@ def _cell_text(cell: Tag) -> str:
     return re.sub(r"\s+", " ", cell.get_text(" ", strip=True)).strip()
 
 
+def _cover_url(cell: Tag, base_url: str) -> str | None:
+    """Absolute URL of the first image in a cell, or None. Covers are mirror-relative."""
+    img = cell.find("img")
+    src = img.get("src") if isinstance(img, Tag) else None
+    if not isinstance(src, str) or not src.strip():
+        return None
+    url = urljoin(f"{base_url.rstrip('/')}/", src.strip())
+    return url if url.startswith(("http://", "https://")) else None
+
+
 def _parse_results(html: str, base_url: str) -> list[BrowseRecord] | None:
     """Parse a libgen search page.
 
@@ -182,14 +193,21 @@ def _parse_results(html: str, base_url: str) -> list[BrowseRecord] | None:
 
     The two shapes are the only ones libgen.li is known to emit; an unexpected width just
     fails safe (author/language read as None) rather than mis-columning.
+
+    With ``covers=on`` every row gains a leading text-less cell that holds the thumbnail.
+    It is dropped before the column logic above, and its image becomes the preview.
     """
     soup = BeautifulSoup(html, "html.parser")
     table = soup.find("table", id=_RESULTS_TABLE_ID)
     if not isinstance(table, Tag):
         return None
 
+    rows = table.find_all("tr")
+    header_cells = rows[0].find_all(["th", "td"]) if rows else []
+    has_cover_column = bool(header_cells) and not _cell_text(header_cells[0])
+
     records: list[BrowseRecord] = []
-    for row in table.find_all("tr")[1:]:  # skip the header row
+    for row in rows[1:]:  # skip the header row
         cells = row.find_all("td")
         if len(cells) < 5:
             continue
@@ -199,6 +217,12 @@ def _parse_results(html: str, base_url: str) -> list[BrowseRecord] | None:
         if not md5_match:
             continue  # spacer/section rows carry no md5
         md5 = md5_match.group(1).lower()
+
+        preview = None
+        # A book without a cover still gets an empty cell, so the header decides too.
+        if not _cell_text(cells[0]) and (has_cover_column or cells[0].find("img")):
+            preview = _cover_url(cells[0], base_url)
+            cells = cells[1:]
 
         title = _cell_text(cells[0])
         fmt = _cell_text(cells[-2]).lower() or None
@@ -219,6 +243,7 @@ def _parse_results(html: str, base_url: str) -> list[BrowseRecord] | None:
                 language=language,
                 size=size,
                 format=fmt,
+                preview=preview,
                 source_url=f"{base_url.rstrip('/')}/ads.php?md5={md5}",
             )
         )

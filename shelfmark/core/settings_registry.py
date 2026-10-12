@@ -854,15 +854,21 @@ def migrate_download_to_browser_settings() -> None:
         logger.exception("Failed to migrate download-to-browser settings")
 
 
-def get_setting_value(field: FieldBase, tab_name: str) -> object:
-    """Resolve the effective value for a settings field."""
+def get_setting_value(
+    field: FieldBase, tab_name: str, *, file_values: dict[str, Any] | None = None
+) -> object:
+    """Resolve the effective value for a settings field.
+
+    ``file_values`` is the already-loaded content of the tab's config file. Callers that
+    resolve many fields of one tab pass it so the file is read once, not once per field.
+    """
     # 1. Check environment variable (if supported for this field)
     has_env_value, parsed_env_value = _get_env_value_for_field(field)
     if has_env_value:
         return parsed_env_value
 
     # 2. Check config file
-    config = load_config_file(tab_name)
+    config = file_values if file_values is not None else load_config_file(tab_name)
     if field.key in config:
         return config[field.key]
 

@@ -28,7 +28,7 @@ from shelfmark.core.settings_registry import (
     register_settings,
 )
 from shelfmark.core.text_match import strip_alternate_title
-from shelfmark.download.network import get_ssl_verify
+from shelfmark.download.network import get_ssl_verify, new_pooled_session
 from shelfmark.metadata_providers import (
     BookMetadata,
     DisplayField,
@@ -1109,7 +1109,7 @@ class HardcoverProvider(MetadataProvider):
         """Initialize provider with optional API key (falls back to config)."""
         raw_key = api_key or app_config.get("HARDCOVER_API_KEY", "")
         self.api_key = _normalize_hardcover_api_key(raw_key)
-        self.session = requests.Session()
+        self.session = new_pooled_session(HARDCOVER_API_URL)
         if self.api_key:
             self.session.headers.update(
                 {

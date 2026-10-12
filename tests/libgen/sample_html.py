@@ -80,3 +80,27 @@ ADS_HTML = f"""
 ADS_HTML_NO_GET = """
 <html><body><p>File not found.</p></body></html>
 """
+
+
+# The same shapes with covers=on: every row gains a leading text-less cell holding the
+# mirror-relative thumbnail (10-cell full rows, 6-cell compact rows).
+SEARCH_HTML_WITH_COVERS = f"""
+<html><body>
+<table id="tablelibgen">
+  <tr><th></th><th>Title</th><th>Author(s)</th><th>Publisher</th><th>Year</th>
+      <th>Language</th><th>Pages</th><th>Size</th><th>Ext.</th><th>Mirrors</th></tr>
+  <tr>
+    <td><img src="/covers/467000/{MD5_A}_small.jpg"></td>
+    <td><a href="edition.php?id=1">One Piece, Vol. 1</a></td>
+    <td>Eiichiro Oda</td><td>Viz Media</td><td>2003</td><td>English</td>
+    <td>216</td><td>180&nbsp;MB</td><td>epub</td>
+    <td><a href="/get.php?md5={MD5_A}">Libgen</a></td>
+  </tr>
+  <tr>
+    <td></td>
+    <td>One Piece 515</td><td>19</td><td>6&nbsp;MB</td><td>cbr</td>
+    <td><a href="/get.php?md5={MD5_C}">Libgen</a></td>
+  </tr>
+</table>
+</body></html>
+"""

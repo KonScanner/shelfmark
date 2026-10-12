@@ -8,7 +8,6 @@ import type {
   MetadataProviderSummary,
   SearchMode,
 } from '../types';
-import { normalizeLanguageSelection } from '../utils/languageFilters';
 import { DropdownList } from './DropdownList';
 import { LanguageMultiSelect } from './LanguageMultiSelect';
 
@@ -81,8 +80,7 @@ export const AdvancedFilters = ({
   const { lang, content, formats } = filters;
 
   const handleLangChange = (next: string[]) => {
-    const normalized = normalizeLanguageSelection(next);
-    onFiltersChange({ lang: normalized });
+    onFiltersChange({ lang: next });
   };
 
   const handleContentChange = (next: string[] | string) => {

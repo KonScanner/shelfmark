@@ -86,40 +86,93 @@ def test_cover_cache_key_depends_on_the_url_only() -> None:
     assert "/" not in key and "." not in key
 
 
-def test_cache_hits_do_not_rewrite_the_index_each_time(tmp_path, monkeypatch) -> None:
-    """A hit only moves the last-access time, so the index is flushed on a timer."""
-    cache = ImageCacheService(tmp_path)
-    assert cache.put("cover-a", b"\xff\xd8\xff" + b"0" * 64, "image/jpeg")
-    saves: list[int] = []
-    real_save = cache._save_index
-    monkeypatch.setattr(cache, "_save_index", lambda: (saves.append(1), real_save())[1])
+_PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 
-    before = cache._index["cover-a"]["accessed_at"]
-    for _ in range(5):
+
+def test_fetch_sends_same_origin_referer_on_each_hop(tmp_path, monkeypatch) -> None:
+    # libgen.li returns an empty 200 image without a Referer; each hop must name its own origin.
+    cache = ImageCacheService(tmp_path)
+
+    def fake_getaddrinfo(_hostname, *_args, **_kwargs):
+        return [(None, None, None, None, ("93.184.216.34", 0))]
+
+    class RedirectResponse:
+        is_redirect = True
+        headers = {"location": "https://cdn.example.org/cover.png"}
+
+        def close(self):
+            return None
+
+    class ImageResponse:
+        is_redirect = False
+        headers = {"content-type": "image/png"}
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            yield _PNG_BYTES
+
+    referers = []
+
+    def fake_get(url, **kwargs):
+        referers.append(kwargs["headers"]["Referer"])
+        return RedirectResponse() if url.startswith("https://libgen.li") else ImageResponse()
+
+    monkeypatch.setattr("shelfmark.download.network.socket.getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr("shelfmark.core.image_cache.requests.get", fake_get)
+
+    assert cache.fetch_and_cache("cover-ref", "https://libgen.li/covers/1/a_small.jpg") is not None
+    assert referers == ["https://libgen.li/", "https://cdn.example.org/"]
+
+
+def test_cache_hit_does_not_rewrite_index_within_persist_interval(tmp_path, monkeypatch) -> None:
+    cache = ImageCacheService(tmp_path)
+    assert cache.put("cover-a", _PNG_BYTES, "image/png")
+
+    saves = []
+    original_save = cache._save_index
+    monkeypatch.setattr(cache, "_save_index", lambda: (saves.append(1), original_save()))
+
+    for _ in range(20):
         assert cache.get("cover-a") is not None
 
     assert saves == []
-    assert cache._index["cover-a"]["accessed_at"] >= before
 
 
-def test_cache_hit_flushes_the_index_once_the_window_has_passed(tmp_path, monkeypatch) -> None:
-    from shelfmark.core import image_cache
-
+def test_cache_hit_persists_access_time_once_it_is_stale(tmp_path, monkeypatch) -> None:
     cache = ImageCacheService(tmp_path)
-    assert cache.put("cover-a", b"\xff\xd8\xff" + b"0" * 64, "image/jpeg")
-    saves: list[int] = []
-    real_save = cache._save_index
-    monkeypatch.setattr(cache, "_save_index", lambda: (saves.append(1), real_save())[1])
+    assert cache.put("cover-a", _PNG_BYTES, "image/png")
+    cache._index["cover-a"]["accessed_at"] = 0
 
-    now = cache._last_saved
-    # One second past the window. Exactly on it, (now + 30) - now can come out a hair under 30
-    # for the small monotonic values of a freshly booted runner.
-    monkeypatch.setattr(
-        image_cache.time, "monotonic", lambda: now + image_cache.ACCESS_FLUSH_SECONDS + 1
-    )
+    saves = []
+    original_save = cache._save_index
+    monkeypatch.setattr(cache, "_save_index", lambda: (saves.append(1), original_save()))
+
     assert cache.get("cover-a") is not None
+    assert cache.get("cover-a") is not None
+
     assert saves == [1]
 
-    # The flush restarts the window.
-    assert cache.get("cover-a") is not None
-    assert saves == [1]
+
+def test_cache_miss_does_not_reparse_an_unchanged_index(tmp_path, monkeypatch) -> None:
+    cache = ImageCacheService(tmp_path)
+    assert cache.put("cover-a", _PNG_BYTES, "image/png")
+
+    loads = []
+    original_load = cache._load_index
+    monkeypatch.setattr(cache, "_load_index", lambda: (loads.append(1), original_load()))
+
+    for i in range(10):
+        assert cache.get(f"missing-{i}") is None
+
+    assert loads == []
+
+
+def test_cache_miss_picks_up_an_index_changed_by_another_process(tmp_path) -> None:
+    writer = ImageCacheService(tmp_path)
+    reader = ImageCacheService(tmp_path)
+
+    assert writer.put("cover-b", _PNG_BYTES, "image/png")
+
+    assert reader.get("cover-b") == (_PNG_BYTES, "image/png")

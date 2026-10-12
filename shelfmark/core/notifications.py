@@ -589,6 +589,34 @@ def _apprise_proxy_env() -> dict[str, str]:
     return {k: v for k, v in env.items() if not os.environ.get(k)}
 
 
+_APPRISE_ENV_LOCK = threading.Lock()
+
+
+@contextmanager
+def _scoped_environ(values: dict[str, str]) -> Iterator[None]:
+    """Set environment variables for the duration of the block, then restore them.
+
+    The proxy variables Apprise needs used to stay in os.environ for the life of the
+    process, which silently switched every other bare ``requests`` call (local download
+    clients included) onto the proxy after the first notification.
+    """
+    import os
+
+    if not values:
+        yield
+        return
+    previous = {key: os.environ.get(key) for key in values}
+    os.environ.update(values)
+    try:
+        yield
+    finally:
+        for key, old_value in previous.items():
+            if old_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old_value
+
+
 def _dispatch_to_apprise(
     urls: Iterable[str],
     *,
@@ -596,8 +624,20 @@ def _dispatch_to_apprise(
     body: str,
     notify_type: object,
 ) -> dict[str, Any]:
-    import os
+    proxy_env = _apprise_proxy_env()
+    if proxy_env:
+        logger.debug("Applying proxy env for Apprise dispatch: %s", list(proxy_env.keys()))
+    with _APPRISE_ENV_LOCK, _scoped_environ(proxy_env):
+        return _deliver_to_apprise(urls, title=title, body=body, notify_type=notify_type)
 
+
+def _deliver_to_apprise(
+    urls: Iterable[str],
+    *,
+    title: str,
+    body: str,
+    notify_type: object,
+) -> dict[str, Any]:
     normalized_urls = _normalize_urls(list(urls))
     url_schemes = _extract_url_schemes(normalized_urls)
     if not normalized_urls:
@@ -605,11 +645,6 @@ def _dispatch_to_apprise(
 
     if apprise is None:
         return {"success": False, "message": "Apprise is not installed"}
-
-    proxy_env = _apprise_proxy_env()
-    if proxy_env:
-        logger.debug("Applying proxy env for Apprise dispatch: %s", list(proxy_env.keys()))
-        os.environ.update(proxy_env)
 
     valid_urls = 0
     invalid_urls = 0

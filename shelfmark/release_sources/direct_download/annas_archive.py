@@ -4,8 +4,10 @@ import concurrent.futures
 import itertools
 import json
 import re
+import threading
 import time
 import unicodedata
+from collections import OrderedDict
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import replace
@@ -21,7 +23,6 @@ from bs4.element import NavigableString
 from shelfmark.bypass.challenge import MAX_CHALLENGE_HTML_CHARS, challenge_marker
 from shelfmark.config.env import DEBUG_SKIP_SOURCES
 from shelfmark.core import search_deadline
-from shelfmark.core.cache import CacheService
 from shelfmark.core.config import config
 from shelfmark.core.logger import setup_logger
 from shelfmark.core.models import SearchFilters
@@ -197,6 +198,21 @@ _DOWNLOAD_SOURCES = [
 
 _SOURCE_FAILURE_THRESHOLD = 4
 _AA_COUNTDOWN_MAX_SECONDS = 300
+# Download counts only feed a display column and a client-side sort, so a search never
+# waits on them for long: whatever arrives inside this budget is kept, the rest is dropped.
+_DOWNLOAD_COUNT_BUDGET_SECONDS = 6.0
+_DOWNLOAD_COUNT_WORKERS = 5
+_DOWNLOAD_COUNT_TIMEOUT = (3, 5)
+# Counts move slowly, so a looked-up count is reused for hours. Lookups that miss the
+# budget keep running in the background and land here, so the next search that shows
+# the same file has its count without asking Anna's Archive again.
+_DOWNLOAD_COUNT_CACHE_TTL_SECONDS = 6 * 3600
+_DOWNLOAD_COUNT_CACHE_MAX_ENTRIES = 5000
+_download_count_cache: OrderedDict[str, tuple[float, int]] = OrderedDict()
+_download_count_cache_lock = threading.Lock()
+# Set by searches that only exist to prime the source (the boot warm-up): they need the
+# challenge solved, not 50 count lookups competing with the user's first search.
+_skip_download_counts: ContextVar[bool] = ContextVar("skip_download_counts", default=False)
 
 
 # --- Distant-path language detection ---
@@ -823,56 +839,96 @@ def search_books(query: str, filters: SearchFilters) -> tuple[list[BrowseRecord]
     return (books, total_count)
 
 
-# One search asks for the same md5 once per title variant that finds it, and reopening
-# the release list asks again. A count that is a few minutes old is fine on a list.
-_DOWNLOAD_COUNT_TTL = 300
-_DOWNLOAD_COUNT_WORKERS = 5
-_download_count_cache = CacheService(max_size=2000)
-# Keeps connections to the mirror open between lookups. requests' default pool of 10
-# per host already covers _DOWNLOAD_COUNT_WORKERS.
-_inline_info_session = requests.Session()
+@contextmanager
+def download_counts_disabled() -> Iterator[None]:
+    """Run a search without download-count lookups (for priming searches)."""
+    token = _skip_download_counts.set(True)
+    try:
+        yield
+    finally:
+        _skip_download_counts.reset(token)
 
 
-def _fetch_download_count_inline(book_id: str) -> int | None:
-    """Fetch the download count for a single book from Anna's Archive inline_info API."""
-    cached = _download_count_cache.get(book_id)
-    if isinstance(cached, int):
-        return cached
+def _cached_download_count(book_id: str) -> int | None:
+    now = time.monotonic()
+    with _download_count_cache_lock:
+        cached = _download_count_cache.get(book_id)
+        if cached is None:
+            return None
+        stored_at, count = cached
+        if now - stored_at > _DOWNLOAD_COUNT_CACHE_TTL_SECONDS:
+            del _download_count_cache[book_id]
+            return None
+        _download_count_cache.move_to_end(book_id)
+        return count
+
+
+def _store_download_count(book_id: str, count: int) -> None:
+    with _download_count_cache_lock:
+        _download_count_cache[book_id] = (time.monotonic(), count)
+        _download_count_cache.move_to_end(book_id)
+        while len(_download_count_cache) > _DOWNLOAD_COUNT_CACHE_MAX_ENTRIES:
+            _download_count_cache.popitem(last=False)
+
+
+def _fetch_download_count_inline(
+    book_id: str, session: requests.Session | None = None
+) -> int | None:
+    """Fetch the download count for a single book from Anna's Archive inline_info API.
+
+    Goes through the configured proxy like every other Anna's Archive request; a bare
+    request here would reach the mirror from the real IP once per search result.
+    """
     try:
         url = f"{network.get_aa_base_url()}/dyn/md5/inline_info/{book_id}"
-        resp = _inline_info_session.get(url, timeout=5, headers={"Accept": "application/json"})
+        getter = session.get if session is not None else requests.get
+        resp = getter(
+            url,
+            timeout=_DOWNLOAD_COUNT_TIMEOUT,
+            headers={"Accept": "application/json"},
+            proxies=network.get_proxies(url),
+            verify=network.get_ssl_verify(url),
+        )
         if resp.status_code == 200:
             data = resp.json()
             count = data.get("downloads_total")
             if count is not None:
-                _download_count_cache.set(book_id, count, _DOWNLOAD_COUNT_TTL)
+                _store_download_count(book_id, count)
                 return count
     except Exception:
         logger.debug("Failed to fetch download count for %s", book_id, exc_info=True)
     return None
 
 
+def _download_count_budget() -> float:
+    """Seconds the count lookups may take, capped by what is left of the search budget."""
+    deadline = search_deadline.current()
+    if deadline is None:
+        return _DOWNLOAD_COUNT_BUDGET_SECONDS
+    return min(_DOWNLOAD_COUNT_BUDGET_SECONDS, deadline.remaining)
+
+
 def _enrich_search_results_with_downloads(books: list[BrowseRecord]) -> None:
     """Fetch download counts for search results in batch and add them to each record's info."""
-    if not books:
+    if not books or _skip_download_counts.get():
         return
 
     book_ids = [b.id for b in books if b.id]
     if not book_ids:
         return
 
-    # Fetch counts in parallel using the inline_info API (cheaper than summary)
     counts: dict[str, int] = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=_DOWNLOAD_COUNT_WORKERS) as executor:
-        futures = {executor.submit(_fetch_download_count_inline, bid): bid for bid in book_ids}
-        for future in concurrent.futures.as_completed(futures):
-            bid = futures[future]
-            try:
-                count = future.result()
-                if count is not None:
-                    counts[bid] = count
-            except Exception:
-                logger.debug("Failed to fetch download count for %s", bid, exc_info=True)
+    missing: list[str] = []
+    for bid in book_ids:
+        cached = _cached_download_count(bid)
+        if cached is None:
+            missing.append(bid)
+        else:
+            counts[bid] = cached
+
+    budget = _download_count_budget() if missing else 0.0
+    if budget > 0:
+        _lookup_download_counts(missing, counts, budget)
 
     # Add counts to each record's info
     for book in books:
@@ -880,6 +936,39 @@ def _enrich_search_results_with_downloads(books: list[BrowseRecord]) -> None:
             if book.info is None:
                 book.info = {}
             book.info["Downloads"] = [str(counts[book.id])]
+
+
+def _lookup_download_counts(book_ids: list[str], counts: dict[str, int], budget: float) -> None:
+    """Look up counts in parallel, keeping those that arrive within ``budget`` seconds."""
+    # One session so the lookups share pooled keep-alive connections instead of paying a
+    # TLS handshake each. It is not closed here: lookups still running when the budget ends
+    # keep using it, and it is released once they finish.
+    session = requests.Session()
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=_DOWNLOAD_COUNT_WORKERS)
+    try:
+        futures = {
+            executor.submit(_fetch_download_count_inline, bid, session): bid for bid in book_ids
+        }
+        done, pending = concurrent.futures.wait(futures, timeout=budget)
+        for future in done:
+            bid = futures[future]
+            try:
+                count = future.result()
+                if count is not None:
+                    counts[bid] = count
+            except Exception:
+                logger.debug("Failed to fetch download count for %s", bid, exc_info=True)
+        if pending:
+            logger.debug(
+                "Download counts: %d of %d lookups missed the %.1fs budget",
+                len(pending),
+                len(book_ids),
+                budget,
+            )
+    finally:
+        # Lookups that missed the budget finish in the background and fill the count
+        # cache, instead of holding the search response open.
+        executor.shutdown(wait=False)
 
 
 def get_book_info(book_id: str, *, fetch_download_count: bool = True) -> BrowseRecord:

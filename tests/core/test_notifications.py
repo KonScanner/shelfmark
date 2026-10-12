@@ -893,3 +893,50 @@ class TestAppriseProxyEnv:
         result = notifications_module._apprise_proxy_env()
 
         assert "HTTP_PROXY" not in result
+
+
+def test_apprise_proxy_env_is_scoped_to_one_dispatch(monkeypatch):
+    """The proxy env Apprise needs must not leak into the rest of the process."""
+    import os
+
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    monkeypatch.setattr(
+        notifications_module,
+        "_apprise_proxy_env",
+        lambda: {"HTTP_PROXY": "socks5://proxy.example.com:1080"},
+    )
+    seen_during_dispatch: list[str | None] = []
+
+    def fake_deliver(_urls, **_kwargs):
+        seen_during_dispatch.append(os.environ.get("HTTP_PROXY"))
+        return {"success": True}
+
+    monkeypatch.setattr(notifications_module, "_deliver_to_apprise", fake_deliver)
+
+    result = notifications_module._dispatch_to_apprise(
+        ["json://example.com"], title="t", body="b", notify_type="info"
+    )
+
+    assert result == {"success": True}
+    assert seen_during_dispatch == ["socks5://proxy.example.com:1080"]
+    assert "HTTP_PROXY" not in os.environ
+
+
+def test_apprise_proxy_env_restores_a_preexisting_value(monkeypatch):
+    import os
+
+    monkeypatch.setenv("HTTPS_PROXY", "")
+    monkeypatch.setattr(
+        notifications_module,
+        "_apprise_proxy_env",
+        lambda: {"HTTPS_PROXY": "http://proxy.example.com:8080"},
+    )
+    monkeypatch.setattr(
+        notifications_module, "_deliver_to_apprise", lambda _urls, **_kwargs: {"success": True}
+    )
+
+    notifications_module._dispatch_to_apprise(
+        ["json://example.com"], title="t", body="b", notify_type="info"
+    )
+
+    assert os.environ.get("HTTPS_PROXY") == ""
