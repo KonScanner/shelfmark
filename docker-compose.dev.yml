@@ -14,6 +14,14 @@ services:
       # Lets the container reach services on the Docker host by name,
       # e.g. a SearXNG instance at http://host.docker.internal:47821.
       - "host.docker.internal:host-gateway"
+    # Send all name lookups (Chrome and subprocesses too, not only the in-app
+    # resolver) to the quietsearx CoreDNS container, which forwards them to
+    # Mullvad over DNS-over-TLS. `make up` starts quietsearx first.
+    networks:
+      - default
+      - quietsearx
+    dns:
+      - 172.30.0.53
     env_file:
       - path: .env
         required: false
@@ -30,3 +38,8 @@ services:
       - ./frontend-dist:/app/frontend-dist:ro
       # Required for torrent / usenet - path must match your download client's volume exactly
       # - /path/to/downloads:/path/to/downloads
+
+networks:
+  quietsearx:
+    external: true
+    name: quietsearx_searxng
