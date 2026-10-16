@@ -25,6 +25,48 @@ logger = setup_logger(__name__)
 _OPERATIONAL_ERRORS = (OSError, RuntimeError, TypeError, ValueError, sqlite3.Error)
 
 
+def _release_language(release: Release) -> str | None:
+    """Return the ISO 639-1 code of a release, or None when the source did not say."""
+    from shelfmark.core.languages import normalize_language
+
+    extra = release.extra if isinstance(release.extra, dict) else {}
+    return normalize_language(release.language or extra.get("language"))
+
+
+def filter_releases(
+    releases: list[Release],
+    *,
+    languages: list[str] | None,
+    formats: list[str] | None,
+) -> list[Release]:
+    """Apply the browse language and format filters to releases from any source.
+
+    Only Anna's Archive filters at the source, and even it retries without the
+    language filter when the filtered search is empty. A release is dropped only when
+    its language or format is known and not wanted; an unknown value is kept, because
+    the file can still be the right one.
+    """
+    from shelfmark.core.languages import normalize_language
+
+    wanted_languages = {
+        code
+        for code in (normalize_language(value) for value in languages or [] if value != "all")
+        if code
+    }
+    wanted_formats = {value.strip().lower() for value in formats or [] if value.strip()}
+
+    kept: list[Release] = []
+    for release in releases:
+        language = _release_language(release)
+        if wanted_languages and language is not None and language not in wanted_languages:
+            continue
+        release_format = (release.format or "").strip().lower()
+        if wanted_formats and release_format and release_format not in wanted_formats:
+            continue
+        kept.append(release)
+    return kept
+
+
 def search_source_releases(
     source_name: str,
     search_book: BookMetadata,

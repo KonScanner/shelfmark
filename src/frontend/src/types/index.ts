@@ -59,6 +59,10 @@ export interface Book {
   retry_available?: boolean;
   downloads?: number;
   extra?: Record<string, unknown>;
+  // File results: the file's md5 when the source knows it (finds the same file from two
+  // sources), and other formats of the same item mapped to their release ids.
+  md5?: string;
+  format_variants?: Record<string, string>;
 }
 
 /**
@@ -301,6 +305,9 @@ export interface AppConfig {
   supported_formats: string[];
   supported_audiobook_formats: string[]; // Audiobook formats (m4b, mp3)
   search_mode: SearchMode;
+  language_sort_order?: string[]; // File results "Preferred languages" sort, first first
+  files_pages_per_search?: number; // File result pages each source loads per search
+  files_search_timing?: 'with_books' | 'on_open'; // When Universal mode loads the Files tab
   metadata_sort_options: SortOption[];
   metadata_search_fields: MetadataSearchField[];
   default_release_source?: string; // Default tab in ReleaseModal (e.g., 'direct_download')
@@ -395,6 +402,7 @@ export interface ReleaseSource {
   enabled: boolean; // Whether the source is available for use
   supported_content_types?: string[]; // Content types this source supports (e.g., ['ebook', 'audiobook'])
   browse_results_are_releases?: boolean;
+  supports_browse_paging?: boolean; // Browse search honours `page`
 }
 
 // Column schema types for plugin-driven release list UI
@@ -531,6 +539,8 @@ export interface ReleasesResponse {
   errors?: string[];
   column_config?: ReleaseColumnConfig | null; // Plugin-driven column configuration
   search_info?: Record<string, SourceSearchInfo>; // Per-source search metadata
+  page?: number; // Browse search: the page these rows belong to
+  has_more?: boolean; // Browse search: whether a later page can add rows
 }
 
 // Search status update from WebSocket (for ReleaseModal loading state)

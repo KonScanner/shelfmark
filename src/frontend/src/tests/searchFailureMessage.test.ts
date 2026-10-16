@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
-import { searchBooks } from '../services/api';
+import { searchSourceFiles } from '../services/api';
 import {
   describeSearchFailure,
   CLIENT_TIMEOUT_MESSAGE,
@@ -22,10 +22,10 @@ const jsonResponse = (body: unknown, status: number): Response =>
     headers: { 'Content-Type': 'application/json' },
   });
 
-/** Drive a real searchBooks() failure so the error is the one the hook actually sees. */
+/** Drive a real searchSourceFiles() failure so the error is the one the hook actually sees. */
 const failedSearch = async (respond: () => Promise<Response>): Promise<unknown> => {
   vi.stubGlobal('fetch', vi.fn(respond));
-  return searchBooks('q=dune').catch((error: unknown) => error);
+  return searchSourceFiles('direct_download', 'q=dune').catch((error: unknown) => error);
 };
 
 describe('describeSearchFailure', () => {

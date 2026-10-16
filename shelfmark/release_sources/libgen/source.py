@@ -21,6 +21,8 @@ from shelfmark.release_sources import (
     ReleaseColumnConfig,
     ReleaseProtocol,
     ReleaseSource,
+    browse_page,
+    plan_query_candidates,
     register_source,
 )
 from shelfmark.release_sources.libgen import scraper
@@ -44,39 +46,13 @@ def _coerce_positive_int(value: object, default: int) -> int:
     return default
 
 
-def _build_query_candidates(plan: ReleaseSearchPlan, book: BookMetadata) -> list[str]:
-    """Build ordered, de-duplicated search queries from the plan (mirrors AudiobookBay)."""
-    candidates: list[str] = []
-    if plan.manual_query:
-        candidates.append(plan.manual_query.strip())
-    elif plan.title_variants:
-        variant = plan.title_variants[0]
-        combined = f"{variant.title} {variant.author}".strip()
-        title_only = (variant.title or "").strip()
-        if combined:
-            candidates.append(combined)
-        if title_only and title_only.lower() != combined.lower():
-            candidates.append(title_only)
-    elif book.title:
-        candidates.append(book.title.strip())
-
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        normalized = candidate.strip()
-        if not normalized or normalized.lower() in seen:
-            continue
-        seen.add(normalized.lower())
-        deduped.append(normalized)
-    return deduped
-
-
 @register_source("libgen")
 class LibgenSource(ReleaseSource):
     """Release source that searches the libgen catalogue for downloadable files."""
 
     name = "libgen"
     display_name = "Libgen"
+    supports_browse_paging: ClassVar[bool] = True
     supported_content_types: ClassVar[list[str]] = ["ebook"]  # incl. comics/manga (cbz/cbr)
 
     def is_available(self) -> bool:
@@ -104,19 +80,20 @@ class LibgenSource(ReleaseSource):
         if not self.is_available():
             return []
 
-        queries = _build_query_candidates(plan, book)
+        queries = plan_query_candidates(plan, book)
         if not queries:
             return []
         max_results = _coerce_positive_int(
             config.get("LIBGEN_SEARCH_MAX_RESULTS", _DEFAULT_MAX_RESULTS), _DEFAULT_MAX_RESULTS
         )
         mirror_list = mirrors.get_libgen_mirrors()
+        page = browse_page(plan)
 
         # One search_libgen call per candidate; it already retries every mirror internally.
         # Worst case (all mirrors dead) stays within the shared search deadline.
         for query in queries:
             logger.info("Searching Libgen for: %s", query)
-            records = scraper.search_libgen(query, mirror_list, max_results=max_results)
+            records = scraper.search_libgen(query, mirror_list, max_results=max_results, page=page)
             if records:
                 return [self._record_to_release(record) for record in records]
         return []

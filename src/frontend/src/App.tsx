@@ -6,6 +6,13 @@ import { ActivitySidebar } from './components/activity';
 import { AdvancedFilters } from './components/AdvancedFilters';
 import { ConfigSetupBanner } from './components/ConfigSetupBanner';
 import { DetailsModal } from './components/DetailsModal';
+import {
+  FilesResults,
+  RESULTS_PANEL_ID,
+  ResultsTabs,
+  resultsTabId,
+} from './components/FilesResults';
+import type { ResultsTab } from './components/FilesResults';
 import { Footer } from './components/Footer';
 import { Header } from './components/Header';
 import { MetadataConfigSession } from './components/MetadataConfigSession';
@@ -32,6 +39,7 @@ import {
 import { useActivity } from './hooks/useActivity';
 import { useAuth } from './hooks/useAuth';
 import { useDownloadTracking } from './hooks/useDownloadTracking';
+import { useFilesSearch } from './hooks/useFilesSearch';
 import { useLatestCallback } from './hooks/useLatestCallback';
 import { useMediaQuery } from './hooks/useMediaQuery';
 import { useMountEffect } from './hooks/useMountEffect';
@@ -88,6 +96,7 @@ import { bookSupportsTargets } from './utils/bookTargetLoader';
 import { buildSearchQuery } from './utils/buildSearchQuery';
 import { wasDownloadQueuedAfterResponseError } from './utils/downloadRecovery';
 import { getDynamicOptionGroup } from './utils/dynamicFieldOptions';
+import { universalFilesParams } from './utils/fileResults';
 import { resolveDefaultLanguageCodes } from './utils/languageFilters';
 import { getConfiguredMetadataProviderForContentType } from './utils/metadataProviders';
 import { getEffectiveMetadataSort } from './utils/metadataSort';
@@ -482,7 +491,6 @@ function App() {
     updateAdvancedFilters,
     handleSearch,
     handleResetSearch,
-    reSortByDownloads,
     searchFieldValues,
     updateSearchFieldValue,
     searchFieldLabels,
@@ -491,7 +499,6 @@ function App() {
     isLoadingMore,
     loadMore,
     totalFound,
-    directTotalResults,
     resultsSourceUrl,
   } = useSearch({
     showToast,
@@ -500,6 +507,18 @@ function App() {
     onSearchReset: clearTracking,
     contentType: effectiveContentType,
   });
+
+  // File results from every release source: all of Direct mode, and the Files tab in
+  // Universal mode.
+  const files = useFilesSearch(config);
+  // The hook's functions are stable; its returned object is not, so callbacks below
+  // depend on these rather than on `files`.
+  const { reset: resetFiles, search: searchFiles, findBook: findFileBook } = files;
+  const [resultsTab, setResultsTab] = useState<ResultsTab>('books');
+  const findResultBook = useCallback(
+    (id: string) => books.find((entry) => entry.id === id) ?? findFileBook(id),
+    [books, findFileBook],
+  );
 
   // When a book is removed from the Hardcover list currently being browsed, remove it from results
   useBookTargetDeselectSync({
@@ -531,11 +550,13 @@ function App() {
 
   const resetSearchResultsState = useCallback(() => {
     setBooks([]);
+    resetFiles();
+    setResultsTab('books');
     setSelectedBook(null);
     setReleaseBook(null);
     setActiveResultsSort('');
     clearTracking();
-  }, [clearTracking, setBooks]);
+  }, [clearTracking, resetFiles, setBooks]);
 
   const loadAdminUsers = useCallback(async () => {
     if (!isAuthenticated || !authIsAdmin || !requestRoleIsAdmin) {
@@ -770,7 +791,7 @@ function App() {
   }, [activitySidebarStatus, dismissedActivityKeys, requestItems]);
 
   // Compute visibility states
-  const hasResults = books.length > 0;
+  const hasResults = books.length > 0 || files.activeParams !== null;
   const isInitialState = !hasResults;
 
   useStatusChangeNotifications({
@@ -889,6 +910,13 @@ function App() {
   );
 
   const effectiveSearchMode: SearchMode = config?.search_mode ?? 'direct';
+  // Direct mode has no Books search: the search button is busy until the first files land.
+  const isSearchBusy =
+    isSearching || (effectiveSearchMode === 'direct' && files.isLoading && files.rowCount === 0);
+  // Universal mode shows Books and Files as tabs once a search has a file query.
+  const showResultsTabs = effectiveSearchMode === 'universal' && files.activeParams !== null;
+  const showFilesResults =
+    effectiveSearchMode === 'direct' || (showResultsTabs && resultsTab === 'files');
 
   // Combined mode requires universal mode, config enabled, and both content types accessible
   const combinedModeAllowed = useMemo(() => {
@@ -955,6 +983,8 @@ function App() {
       searchModeOverride?: SearchMode;
       providerOverride?: string;
       sort?: string;
+      /** False keeps the file rows (a Books sort change reuses the same query). */
+      refreshFiles?: boolean;
     }) => {
       void refreshRequestPolicy();
       void handleSearch({
@@ -966,8 +996,28 @@ function App() {
         providerOverride: opts.providerOverride,
         sort: opts.sort,
       });
+
+      const mode = opts.searchModeOverride ?? config?.search_mode ?? 'universal';
+      const filesParams =
+        mode === 'direct'
+          ? opts.query || null
+          : universalFilesParams(
+              opts.query,
+              opts.fieldValues,
+              opts.contentTypeOverride ?? effectiveContentType,
+            );
+      if (filesParams === null) {
+        resetFiles();
+        setResultsTab('books');
+      } else if (opts.refreshFiles ?? true) {
+        // Every search runs the file sources again, so searching again is the retry.
+        searchFiles(filesParams, {
+          start: mode === 'direct' || config?.files_search_timing !== 'on_open',
+        });
+        setResultsTab('books');
+      }
     },
-    [refreshRequestPolicy, handleSearch, config],
+    [refreshRequestPolicy, handleSearch, config, effectiveContentType, resetFiles, searchFiles],
   );
 
   const handleSettingsSaved = useCallback(() => {
@@ -976,7 +1026,7 @@ function App() {
 
   // Show book details
   const handleShowDetails = async (id: string): Promise<void> => {
-    const book = books.find((entry) => entry.id === id);
+    const book = findResultBook(id);
     const metadataBook = book && isMetadataBook(book) ? book : null;
 
     if (metadataBook) {
@@ -1875,7 +1925,7 @@ function App() {
   const getDirectActionButtonState = useCallback(
     (bookId: string): ButtonStateInfo => {
       const baseState = getButtonState(bookId);
-      const book = books.find((entry) => entry.id === bookId);
+      const book = findResultBook(bookId);
       if (!book) {
         return baseState;
       }
@@ -1888,7 +1938,7 @@ function App() {
       const mode = getDirectPolicyMode(book);
       return applyDirectPolicyModeToButtonState(baseState, mode);
     },
-    [books, getButtonState, getDirectPolicyMode, isDownloadTaskDismissed],
+    [findResultBook, getButtonState, getDirectPolicyMode, isDownloadTaskDismissed],
   );
 
   const getUniversalActionButtonState = useCallback(
@@ -2453,6 +2503,8 @@ function App() {
           statusCounts={statusCounts}
           onLogoClick={() => {
             handleResetSearch(config);
+            resetFiles();
+            setResultsTab('books');
             setActiveQueryTarget('general');
             setActiveResultsSort('');
           }}
@@ -2466,7 +2518,7 @@ function App() {
             hasAdvancedContent ? () => setShowAdvanced(!effectiveShowAdvanced) : undefined
           }
           isAdvancedActive={effectiveShowAdvanced}
-          isLoading={isSearching}
+          isLoading={isSearchBusy}
           onShowToast={showToast}
           onRemoveToast={removeToast}
           contentType={effectiveContentType}
@@ -2533,7 +2585,7 @@ function App() {
         >
           <SearchSection
             onSearch={handleSearchDispatch}
-            isLoading={isSearching}
+            isLoading={isSearchBusy}
             isInitialState={isInitialState}
             searchPageTitle={config?.search_page_title || 'Shelfmark'}
             bookLanguages={bookLanguages}
@@ -2566,55 +2618,84 @@ function App() {
             isAdmin={requestRoleIsAdmin}
           />
 
-          <ResultsSection
-            books={books}
-            visible={hasResults}
-            onDetails={handleShowDetails}
-            onDownload={handleDownload}
-            onGetReleases={handleGetReleases}
-            getButtonState={getDirectActionButtonState}
-            getUniversalButtonState={getUniversalActionButtonState}
-            sortValue={visibleResultsSort}
-            showSortControl={
-              !activeQueryUsesSeriesBrowse && !activeQueryUsesListBrowse && !resultsSourceUrl
-            }
-            onSortChange={(value) => {
-              const request = buildCurrentSearchRequest(value);
-              const shouldPersistAppliedSort = !(
-                effectiveSearchMode === 'universal' &&
-                activeQueryUsesSeriesBrowse &&
-                request.appliedSort === seriesBrowseCapability?.sort
-              );
-              if (shouldPersistAppliedSort) {
-                updateAdvancedFilters({ sort: request.appliedSort });
-              }
-              setActiveResultsSort(request.appliedSort);
+          {showResultsTabs && (
+            <ResultsTabs
+              active={resultsTab}
+              booksCount={totalFound || books.length}
+              filesCount={files.displayed.length}
+              filesLoading={files.isLoading || files.isPending}
+              onChange={(tab) => {
+                setResultsTab(tab);
+                if (tab === 'files') files.ensureStarted();
+              }}
+            />
+          )}
 
-              // "Most downloads" is a client-side sort — just re-sort existing books
-              if (request.appliedSort === 'downloads' && effectiveSearchMode === 'direct') {
-                reSortByDownloads();
-                return;
-              }
+          <div
+            {...(showResultsTabs && {
+              role: 'tabpanel',
+              id: RESULTS_PANEL_ID,
+              'aria-labelledby': resultsTabId(resultsTab),
+            })}
+          >
+            {showFilesResults ? (
+              files.activeParams !== null && (
+                <FilesResults
+                  files={files}
+                  bookLanguages={bookLanguages}
+                  onDetails={handleShowDetails}
+                  onDownload={handleDownload}
+                  onGetReleases={handleGetReleases}
+                  getButtonState={getDirectActionButtonState}
+                  onShowToast={showToast}
+                />
+              )
+            ) : (
+              <ResultsSection
+                books={books}
+                visible={hasResults}
+                onDetails={handleShowDetails}
+                onDownload={handleDownload}
+                onGetReleases={handleGetReleases}
+                getButtonState={getDirectActionButtonState}
+                getUniversalButtonState={getUniversalActionButtonState}
+                sortValue={visibleResultsSort}
+                showSortControl={
+                  !activeQueryUsesSeriesBrowse && !activeQueryUsesListBrowse && !resultsSourceUrl
+                }
+                onSortChange={(value) => {
+                  const request = buildCurrentSearchRequest(value);
+                  const shouldPersistAppliedSort = !(
+                    effectiveSearchMode === 'universal' &&
+                    activeQueryUsesSeriesBrowse &&
+                    request.appliedSort === seriesBrowseCapability?.sort
+                  );
+                  if (shouldPersistAppliedSort) {
+                    updateAdvancedFilters({ sort: request.appliedSort });
+                  }
+                  setActiveResultsSort(request.appliedSort);
 
-              runSearchWithPolicyRefresh({
-                query: request.query,
-                fieldValues: request.fieldValues,
-                searchModeOverride: effectiveSearchMode,
-                providerOverride: request.providerOverride,
-                sort: request.appliedSort,
-              });
-            }}
-            metadataSortOptions={resolvedMetadataSortOptions}
-            hasMore={hasMore}
-            isLoadingMore={isLoadingMore}
-            onLoadMore={() => {
-              void loadMore(config, effectiveSearchMode);
-            }}
-            totalFound={totalFound}
-            directTotalResults={directTotalResults}
-            onShowToast={showToast}
-            resultsSourceUrl={resultsSourceUrl}
-          />
+                  runSearchWithPolicyRefresh({
+                    query: request.query,
+                    fieldValues: request.fieldValues,
+                    searchModeOverride: effectiveSearchMode,
+                    providerOverride: request.providerOverride,
+                    sort: request.appliedSort,
+                    refreshFiles: false,
+                  });
+                }}
+                metadataSortOptions={resolvedMetadataSortOptions}
+                hasMore={hasMore}
+                isLoadingMore={isLoadingMore}
+                onLoadMore={() => {
+                  void loadMore(config, effectiveSearchMode);
+                }}
+                totalFound={totalFound}
+                onShowToast={showToast}
+                resultsSourceUrl={resultsSourceUrl}
+              />
+            )}
+          </div>
 
           {selectedBook && (
             <DetailsModal

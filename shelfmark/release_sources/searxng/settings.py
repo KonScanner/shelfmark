@@ -108,6 +108,17 @@ def searxng_config_settings() -> list[SettingsField]:
             env_supported=True,
         ),
         TextField(
+            key="SEARXNG_FILE_ENGINES",
+            label="File Engines",
+            description=(
+                "Comma-separated engines that find files directly. Each search also runs "
+                "through these engines, even when they are off on the instance. "
+                "Leave empty to skip this pass."
+            ),
+            default="findfiles,wikicommons.files",
+            env_supported=True,
+        ),
+        TextField(
             key="SEARXNG_LANGUAGE",
             label="Language",
             description="SearXNG language code, e.g. el or en. Leave empty to search all languages.",
@@ -118,7 +129,7 @@ def searxng_config_settings() -> list[SettingsField]:
             key="SEARXNG_MAX_RESULTS",
             label="Max Results",
             description="Maximum number of file-link results to keep per search",
-            default=30,
+            default=50,
             min_value=5,
             max_value=100,
         ),

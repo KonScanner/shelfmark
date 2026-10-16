@@ -779,7 +779,7 @@ def search_books(query: str, filters: SearchFilters) -> tuple[list[BrowseRecord]
 
     url = (
         f"{network.get_aa_base_url()}"
-        f"/search?index=&page=1&display=table"
+        f"/search?index=&page={filters.page or 1}&display=table"
         f"&acc=aa_download&acc=external_download"
         f"&ext={'&ext='.join(formats_to_use)}"
         f"&q={query_html}"

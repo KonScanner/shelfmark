@@ -3,9 +3,9 @@
 import types
 from unittest.mock import patch
 
-from shelfmark.release_sources import BrowseRecord, ReleaseProtocol
+from shelfmark.release_sources import BrowseRecord, ReleaseProtocol, plan_query_candidates
 from shelfmark.release_sources.libgen import source as libgen_source
-from shelfmark.release_sources.libgen.source import LibgenSource, _build_query_candidates
+from shelfmark.release_sources.libgen.source import LibgenSource
 from tests.libgen import sample_html as html
 
 
@@ -66,21 +66,21 @@ class TestIsAvailable:
 
 def test_build_query_candidates_manual_query_wins():
     plan = _plan(manual_query="  attack on titan  ")
-    assert _build_query_candidates(plan, _book("ignored")) == ["attack on titan"]
+    assert plan_query_candidates(plan, _book("ignored")) == ["attack on titan"]
 
 
 def test_build_query_candidates_combined_then_title_only():
     plan = _plan(variants=[_variant("One Piece", "Oda")])
-    assert _build_query_candidates(plan, _book("x")) == ["One Piece Oda", "One Piece"]
+    assert plan_query_candidates(plan, _book("x")) == ["One Piece Oda", "One Piece"]
 
 
 def test_build_query_candidates_dedups_when_no_author():
     plan = _plan(variants=[_variant("Dune", "")])
-    assert _build_query_candidates(plan, _book("x")) == ["Dune"]
+    assert plan_query_candidates(plan, _book("x")) == ["Dune"]
 
 
 def test_build_query_candidates_book_title_fallback():
-    assert _build_query_candidates(_plan(), _book("Fallback Title")) == ["Fallback Title"]
+    assert plan_query_candidates(_plan(), _book("Fallback Title")) == ["Fallback Title"]
 
 
 def test_search_non_ebook_returns_empty():
