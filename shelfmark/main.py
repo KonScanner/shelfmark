@@ -74,6 +74,7 @@ from shelfmark.core.prefix_middleware import PrefixMiddleware
 from shelfmark.core.release_inspect_routes import register_release_inspect_routes
 from shelfmark.core.request_helpers import (
     coerce_bool,
+    coerce_int,
     emit_ws_event,
     get_session_db_user_id,
     load_users_request_policy_settings,
@@ -1245,7 +1246,45 @@ def _parse_search_filters_from_request() -> SearchFilters:
         sort=request.args.get("sort"),
         content=request.args.getlist("content"),
         format=request.args.getlist("format"),
+        page=_parse_browse_page(request.args.get("page")),
     )
+
+
+def _language_sort_order() -> list[str]:
+    """Return the Language Sort Order setting as ISO 639-1 codes, without repeats."""
+    from shelfmark.config.settings import DEFAULT_LANGUAGE_SORT_ORDER
+    from shelfmark.core.languages import normalize_language
+
+    raw = app_config.get("LANGUAGE_SORT_ORDER", DEFAULT_LANGUAGE_SORT_ORDER)
+    codes: list[str] = []
+    for part in str(raw or "").split(","):
+        code = normalize_language(part.strip())
+        if code and code not in codes:
+            codes.append(code)
+    return codes
+
+
+def _files_pages_per_search() -> int:
+    """Return the Pages to Load per Search setting, kept inside its allowed range."""
+    from shelfmark.config.settings import (
+        DEFAULT_FILES_PAGES_PER_SEARCH,
+        MAX_FILES_PAGES_PER_SEARCH,
+    )
+
+    pages = coerce_int(
+        app_config.get("FILES_PAGES_PER_SEARCH", DEFAULT_FILES_PAGES_PER_SEARCH),
+        DEFAULT_FILES_PAGES_PER_SEARCH,
+    )
+    return min(max(pages, 1), MAX_FILES_PAGES_PER_SEARCH)
+
+
+def _parse_browse_page(value: str | None) -> int | None:
+    """Return a browse page number after the first, or None for the first page."""
+    try:
+        page = int(value or "")
+    except ValueError:
+        return None
+    return page if page > 1 else None
 
 
 def _build_source_query_book(query_text: str, filters: SearchFilters) -> BookMetadata:
@@ -1480,8 +1519,15 @@ def api_config() -> Response | tuple[Response, int]:
             "onboarding_complete": _get_onboarding_complete(),
             # Default sort orders
             "default_sort": app_config.get(
-                "AA_DEFAULT_SORT", ""
-            ),  # For direct mode (Anna's Archive) — empty means use local downloads sort
+                "AA_DEFAULT_SORT", "language"
+            ),  # File results (Direct mode, Files tab): every sort runs in the browser
+            "language_sort_order": _language_sort_order(),
+            "files_pages_per_search": _files_pages_per_search(),
+            "files_search_timing": (
+                "on_open"
+                if app_config.get("FILES_SEARCH_TIMING", "with_books") == "on_open"
+                else "with_books"
+            ),
             "metadata_default_sort": get_provider_default_sort(
                 metadata_ui_provider
             ),  # For universal mode
@@ -3245,6 +3291,13 @@ def api_releases() -> Response | tuple[Response, int]:
         provider (str): Metadata provider name (required)
         book_id (str): Book ID from metadata provider (required)
         source (str): Release source to search (optional, default: all)
+        query (str): Browse query; with ``source`` and no ``provider``, searches that
+            source directly (lang, format, author, title and isbn filter it)
+        page (int): Browse result page, from 1 (optional). A source that cannot page
+            answers a later page with no rows.
+
+    Browse responses also carry ``page`` and ``has_more`` (whether a later page can
+    add rows).
 
     Returns:
         flask.Response: JSON with list of available releases.
@@ -3253,7 +3306,10 @@ def api_releases() -> Response | tuple[Response, int]:
     try:
         from dataclasses import asdict
 
-        from shelfmark.core.release_search import search_source_releases
+        from shelfmark.core.release_search import (
+            filter_releases,
+            search_source_releases,
+        )
         from shelfmark.metadata_providers import (
             BookMetadata,
             get_provider,
@@ -3267,6 +3323,7 @@ def api_releases() -> Response | tuple[Response, int]:
             list_available_sources,
             serialize_column_config,
             source_results_are_releases,
+            source_supports_browse_paging,
         )
 
         def _search_source_releases(
@@ -3331,7 +3388,13 @@ def api_releases() -> Response | tuple[Response, int]:
             source_query_filters = browse_filters
 
         # Determine which release sources to search
-        if source_filter:
+        browse_page = browse_filters.page or 1
+        if source_query_filters is not None:
+            # A later browse page goes only to a source that can page; any other source
+            # has no more rows and would only repeat its first page.
+            can_page = browse_page == 1 or source_supports_browse_paging(source_filter)
+            sources_to_search = [source_filter] if can_page else []
+        elif source_filter:
             sources_to_search = [source_filter]
         elif is_source_provider:
             # Source-backed browse flows stay within the source that produced the record.
@@ -3443,6 +3506,15 @@ def api_releases() -> Response | tuple[Response, int]:
                 if error is not None:
                     errors.append(error)
 
+        # A browse search pages while its source can page and still answers. The language
+        # and format filters apply here for every source: most sources do not filter.
+        has_more_pages = False
+        if source_query_filters is not None:
+            has_more_pages = bool(all_releases) and source_supports_browse_paging(source_filter)
+            all_releases = filter_releases(
+                all_releases, languages=browse_filters.lang, formats=browse_filters.format
+            )
+
         # Convert Release objects to dicts
         releases_data = [_serialize_release(release) for release in all_releases]
 
@@ -3490,6 +3562,9 @@ def api_releases() -> Response | tuple[Response, int]:
             "column_config": column_config,
             "search_info": search_info,
         }
+        if source_query_filters is not None:
+            response["page"] = browse_page
+            response["has_more"] = has_more_pages
 
         if errors:
             response["errors"] = errors

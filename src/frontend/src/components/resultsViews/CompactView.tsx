@@ -232,6 +232,12 @@ export const CompactView = ({
                   </>
                 ) : null;
               })()}
+              {book.source_display_name && (
+                <>
+                  <span>•</span>
+                  <span>{book.source_display_name}</span>
+                </>
+              )}
             </div>
           )}
 

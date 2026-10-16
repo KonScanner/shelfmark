@@ -207,16 +207,21 @@ register_group(
 )
 
 
-# Direct mode sort options
+# File result sort options
+# File results come from several sources, so every sort runs in the browser over the
+# merged rows. "language" follows the Language Sort Order setting; "" is most downloads.
+DEFAULT_LANGUAGE_SORT_ORDER = "en, el, de, ru, he, fr, es"
+DEFAULT_FILES_PAGES_PER_SEARCH = 2
+MAX_FILES_PAGES_PER_SEARCH = 5
+
 _AA_SORT_OPTIONS = [
+    {"value": "language", "label": "Preferred languages"},
     {"value": "", "label": "Most downloads"},
     {"value": "relevance", "label": "Most relevant"},
     {"value": "newest", "label": "Newest (publication year)"},
     {"value": "oldest", "label": "Oldest (publication year)"},
     {"value": "largest", "label": "Largest (filesize)"},
     {"value": "smallest", "label": "Smallest (filesize)"},
-    {"value": "newest_added", "label": "Newest (open sourced)"},
-    {"value": "oldest_added", "label": "Oldest (open sourced)"},
 ]
 
 _FORMAT_OPTIONS = [
@@ -574,11 +579,55 @@ def search_mode_settings() -> list[SettingsField]:
         ),
         SelectField(
             key="AA_DEFAULT_SORT",
-            label="Default Sort Order",
-            description="Default sort order for search results.",
+            label="Default File Sort Order",
+            description=(
+                "Default sort order for file results (Direct mode, and the Files tab in "
+                "Universal mode). Preferred languages puts the Language Sort Order first; "
+                "Most downloads is the previous default."
+            ),
             options=_AA_SORT_OPTIONS,
-            default="",
-            show_when={"field": "SEARCH_MODE", "value": "direct"},
+            default="language",
+        ),
+        TextField(
+            key="LANGUAGE_SORT_ORDER",
+            label="Language Sort Order",
+            description=(
+                "Comma-separated language codes for the Preferred languages sort, first "
+                "language first. Results in other languages, or with no known language, "
+                "come after them."
+            ),
+            default=DEFAULT_LANGUAGE_SORT_ORDER,
+        ),
+        NumberField(
+            key="FILES_PAGES_PER_SEARCH",
+            label="Pages to Load per Search",
+            description=(
+                "Result pages each file source loads when a search starts. More pages "
+                "give a better first sort, but add load on the sources and the risk of "
+                "rate limits. Further pages load while you scroll."
+            ),
+            default=DEFAULT_FILES_PAGES_PER_SEARCH,
+            min_value=1,
+            max_value=MAX_FILES_PAGES_PER_SEARCH,
+        ),
+        SelectField(
+            key="FILES_SEARCH_TIMING",
+            label="Files Tab Search",
+            description="When Universal mode searches the file sources for the Files tab.",
+            options=[
+                {
+                    "value": "with_books",
+                    "label": "With every search",
+                    "description": "Files load together with Books, so the tab is ready.",
+                },
+                {
+                    "value": "on_open",
+                    "label": "When the Files tab opens",
+                    "description": "No load on the file sources until you open the tab.",
+                },
+            ],
+            default="with_books",
+            show_when={"field": "SEARCH_MODE", "value": "universal"},
         ),
         CheckboxField(
             key="SHOW_RELEASE_SOURCE_LINKS",

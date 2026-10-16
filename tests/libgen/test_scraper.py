@@ -147,3 +147,15 @@ def test_search_libgen_falls_through_dead_mirror():
 def test_search_libgen_all_mirrors_dead_returns_empty():
     with patch.object(scraper, "fetch_page", return_value=None):
         assert scraper.search_libgen("q", ["https://a", "https://b"], max_results=25) == []
+
+
+def test_search_libgen_asks_for_a_later_page():
+    calls = []
+
+    def fake_fetch(url, timeout=(5, 15)):
+        calls.append(url)
+        return html.SEARCH_HTML
+
+    with patch.object(scraper, "fetch_page", side_effect=fake_fetch):
+        scraper.search_libgen("one piece", ["https://libgen.li"], max_results=25, page=3)
+    assert calls[0].endswith("&covers=on&page=3")

@@ -1,14 +1,8 @@
-// Direct download mode sort options
-export const SORT_OPTIONS = [
-  { value: 'downloads', label: 'Most downloads' },
-  { value: 'relevance', label: 'Most relevant' },
-  { value: 'newest', label: 'Newest (publication year)' },
-  { value: 'oldest', label: 'Oldest (publication year)' },
-  { value: 'largest', label: 'Largest (filesize)' },
-  { value: 'smallest', label: 'Smallest (filesize)' },
-  { value: 'newest_added', label: 'Newest (open sourced)' },
-  { value: 'oldest_added', label: 'Oldest (open sourced)' },
-];
+import { FILE_SORT_OPTIONS } from '../utils/fileResults';
+
+// Direct-mode and Files-tab results are merged from several sources and sorted in the
+// browser, so their sort options are the file sorts.
+export const SORT_OPTIONS = FILE_SORT_OPTIONS;
 
 // Note: Metadata mode sort options are now dynamic per provider
 // They come from the /api/config endpoint as metadata_sort_options

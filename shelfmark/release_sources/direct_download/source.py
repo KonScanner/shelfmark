@@ -99,6 +99,7 @@ class DirectDownloadSource(ReleaseSource):
 
     name = "direct_download"
     display_name = "Direct Download"
+    supports_browse_paging: ClassVar[bool] = True
     supported_content_types: ClassVar[list[str]] = ["ebook"]  # Direct downloads only support ebooks
 
     def __init__(self) -> None:

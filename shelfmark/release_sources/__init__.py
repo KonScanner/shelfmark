@@ -388,6 +388,10 @@ class ReleaseSource(ABC):
         "audiobook",
     ]  # Content types this source supports
     can_be_default: bool = True  # Whether this source can be selected as default in settings
+    # Whether a browse search honours `SearchFilters.page` and returns that page of its
+    # results. Sources without it are searched on the first page only, so a later page
+    # never repeats their first-page rows.
+    supports_browse_paging: ClassVar[bool] = False
 
     @abstractmethod
     def search(
@@ -506,6 +510,7 @@ _BUILTIN_SOURCE_MODULES = (
     "shelfmark.release_sources.audiobookbay",
     "shelfmark.release_sources.direct_download",
     "shelfmark.release_sources.irc",
+    "shelfmark.release_sources.internet_archive",
     "shelfmark.release_sources.jackett",
     "shelfmark.release_sources.libgen",
     "shelfmark.release_sources.newznab",
@@ -585,6 +590,7 @@ def list_available_sources() -> list[dict]:
                     instance, "supported_content_types", ["ebook", "audiobook"]
                 ),
                 "browse_results_are_releases": instance.search_results_are_releases(),
+                "supports_browse_paging": instance.supports_browse_paging,
                 "can_be_default": getattr(instance, "can_be_default", True),
             }
         )
@@ -637,6 +643,49 @@ def browse_record_to_book_metadata(
         language=record.language,
         source_url=record.source_url,
     )
+
+
+def browse_page(plan: ReleaseSearchPlan) -> int:
+    """Return the browse page a search plan asks for; 1 when it names none."""
+    # getattr: plans built by older callers (and test doubles) may lack source_filters.
+    filters = getattr(plan, "source_filters", None)
+    page = getattr(filters, "page", None)
+    return page if isinstance(page, int) and page > 1 else 1
+
+
+def plan_query_candidates(plan: ReleaseSearchPlan, book: BookMetadata) -> list[str]:
+    """Return the free-text queries for a source that searches by text, best first.
+
+    The manual query wins. Otherwise "title author" comes first and the title alone
+    second, as a looser retry; the book title is the last resort. Blank and repeated
+    (case-insensitive) queries are dropped.
+    """
+    candidates: list[str] = []
+    if plan.manual_query and plan.manual_query.strip():
+        candidates.append(plan.manual_query)
+    elif plan.title_variants:
+        variant = plan.title_variants[0]
+        candidates.append(" ".join(part for part in [variant.title, variant.author] if part))
+        candidates.append(variant.title or "")
+    elif book.title:
+        candidates.append(book.title)
+
+    queries: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        query = candidate.strip()
+        if query and query.lower() not in seen:
+            seen.add(query.lower())
+            queries.append(query)
+    return queries
+
+
+def source_supports_browse_paging(name: str) -> bool:
+    """Whether a source's browse search honours ``SearchFilters.page``."""
+    _ensure_builtin_sources_registered()
+    if name not in _SOURCES:
+        return False
+    return bool(_SOURCES[name].supports_browse_paging)
 
 
 def source_results_are_releases(name: str) -> bool:

@@ -141,3 +141,95 @@ def test_plan_receives_filters_and_user_id(monkeypatch: pytest.MonkeyPatch) -> N
         "source_filters": None,
         "user_id": 42,
     }
+
+
+class TestFilterReleases:
+    """The browse language and format filters, applied to every source."""
+
+    @staticmethod
+    def _release(title: str, *, language: str | None = None, fmt: str | None = None):
+        from shelfmark.release_sources import Release
+
+        return Release(
+            source="searxng", source_id=title, title=title, language=language, format=fmt
+        )
+
+    def test_known_other_languages_are_dropped_and_unknown_kept(self):
+        releases = [
+            self._release("greek", language="el"),
+            self._release("greek-name", language="Greek"),
+            self._release("english", language="en"),
+            self._release("unknown"),
+        ]
+
+        kept = release_search.filter_releases(releases, languages=["el"], formats=None)
+
+        assert [r.title for r in kept] == ["greek", "greek-name", "unknown"]
+
+    def test_all_means_no_language_filter(self):
+        releases = [self._release("english", language="en")]
+
+        assert release_search.filter_releases(releases, languages=["all"], formats=None) == releases
+
+    def test_formats_filter(self):
+        releases = [
+            self._release("epub", fmt="epub"),
+            self._release("pdf", fmt="PDF"),
+            self._release("unknown"),
+        ]
+
+        kept = release_search.filter_releases(releases, languages=None, formats=["epub"])
+
+        assert [r.title for r in kept] == ["epub", "unknown"]
+
+
+class TestBrowsePaging:
+    """Which sources page a browse search."""
+
+    def test_file_sources_page(self):
+        from shelfmark.release_sources import source_supports_browse_paging
+
+        for name in ("direct_download", "libgen", "searxng", "internet_archive"):
+            assert source_supports_browse_paging(name) is True, name
+
+    def test_other_and_unknown_sources_do_not(self):
+        from shelfmark.release_sources import source_supports_browse_paging
+
+        assert source_supports_browse_paging("prowlarr") is False
+        assert source_supports_browse_paging("no-such-source") is False
+
+
+class TestBrowsePageAndQueries:
+    """Shared helpers that file sources use to read a search plan."""
+
+    @staticmethod
+    def _plan(manual_query: str | None = None, page: int | None = None):
+        from shelfmark.core.models import SearchFilters
+        from shelfmark.core.search_plan import ReleaseSearchPlan
+
+        return ReleaseSearchPlan(
+            languages=None,
+            isbn_candidates=[],
+            author="",
+            title_variants=[],
+            grouped_title_variants=[],
+            manual_query=manual_query,
+            source_filters=SearchFilters(page=page) if page is not None else None,
+        )
+
+    @pytest.mark.parametrize(
+        ("page", "expected"),
+        [(None, 1), (1, 1), (0, 1), (-1, 1), (4, 4)],
+        ids=["no-filters", "first", "zero", "negative", "fourth"],
+    )
+    def test_browse_page(self, page, expected):
+        from shelfmark.release_sources import browse_page
+
+        assert browse_page(self._plan(page=page)) == expected
+
+    def test_blank_manual_query_falls_back_to_the_book_title(self):
+        from shelfmark.release_sources import plan_query_candidates
+
+        assert plan_query_candidates(self._plan(manual_query="   "), _book(title="Dune")) == [
+            "Dune"
+        ]

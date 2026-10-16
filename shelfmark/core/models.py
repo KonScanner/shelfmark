@@ -222,3 +222,5 @@ class SearchFilters:
     sort: str | None = None
     content: list[str] | None = None
     format: list[str] | None = None
+    # Result page for browse searches; None means the first page.
+    page: int | None = None

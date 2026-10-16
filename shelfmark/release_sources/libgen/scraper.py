@@ -107,6 +107,7 @@ def search_libgen(
     mirrors: list[str],
     *,
     max_results: int,
+    page: int = 1,
     timeout: tuple[int, int] = (5, 15),
 ) -> list[BrowseRecord]:
     """Search each mirror's catalogue until one answers with a results table.
@@ -119,6 +120,8 @@ def search_libgen(
     for base in mirrors:
         # covers=on adds a leading thumbnail column; _parse_results skips it for the fields.
         url = f"{base.rstrip('/')}/index.php?req={quote(query)}&res={max_results}&covers=on"
+        if page > 1:
+            url += f"&page={page}"
         html = fetch_page(url, timeout)
         if html is None:
             continue

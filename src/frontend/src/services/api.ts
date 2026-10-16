@@ -197,6 +197,10 @@ async function fetchJSON<T>(
   const controller = new AbortController();
   const timeoutId =
     timeoutMs && timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  // A caller's own signal cancels the request too (the timeout still applies).
+  const abortFromCaller = () => controller.abort();
+  if (opts.signal?.aborted) controller.abort();
+  opts.signal?.addEventListener('abort', abortFromCaller, { once: true });
   const headers = new Headers(opts.headers);
   if (!headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
@@ -264,8 +268,8 @@ async function fetchJSON<T>(
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- fetch() returns untyped JSON; callers provide the expected response shape at the boundary
     return res.json();
   } catch (error) {
-    // Handle abort/timeout errors
-    if (error instanceof Error && error.name === 'AbortError') {
+    // Handle abort/timeout errors. A caller's own abort is not a timeout: pass it on.
+    if (error instanceof Error && error.name === 'AbortError' && !opts.signal?.aborted) {
       throw new TimeoutError(
         'Request timed out. Check your network connection or proxy configuration.',
       );
@@ -275,24 +279,34 @@ async function fetchJSON<T>(
     if (timeoutId) {
       clearTimeout(timeoutId);
     }
+    opts.signal?.removeEventListener('abort', abortFromCaller);
   }
 }
 
 // API functions
-export const searchBooks = async (
-  query: string,
-): Promise<{ books: Book[]; totalResults: number | string | null }> => {
-  if (!query) return { books: [], totalResults: null };
+
+/**
+ * Search one release source for files (a browse search) and return one page of rows.
+ *
+ * `params` is the browse query string (`query=...&lang=...`). Aborting `signal` drops
+ * the request, so a newer search does not wait behind an older one.
+ */
+export const searchSourceFiles = async (
+  source: string,
+  params: string,
+  page = 1,
+  signal?: AbortSignal,
+): Promise<{ books: Book[]; hasMore: boolean }> => {
+  const pageParam = page > 1 ? `&page=${page}` : '';
   const response = await fetchJSON<ReleasesResponse>(
-    `${API_BASE}/releases?source=direct_download&${query}`,
-    {},
+    `${API_BASE}/releases?source=${encodeURIComponent(source)}&${params}${pageParam}`,
+    { signal },
     searchTimeoutMs,
   );
-  // Extract total count from search_info if available
-  const firstSource = response.sources_searched?.[0];
-  const searchInfo = firstSource ? response.search_info?.[firstSource] : undefined;
-  const totalResults = searchInfo?.total_results ?? null;
-  return { books: response.releases.map(transformReleaseToDirectBook), totalResults };
+  return {
+    books: response.releases.map(transformReleaseToDirectBook),
+    hasMore: response.has_more ?? false,
+  };
 };
 
 // Metadata search response type (internal)

@@ -1,4 +1,5 @@
 import type { AdvancedFilterState, Language } from '../types';
+import { isClientSideSort } from './fileResults';
 import { getLanguageFilterValues } from './languageFilters';
 
 interface BuildSearchQueryOptions {
@@ -47,9 +48,9 @@ export const buildSearchQuery = ({
   if (content) queryParts.push(`content=${encodeURIComponent(content)}`);
   formats.forEach((format) => queryParts.push(`format=${encodeURIComponent(format)}`));
 
-  // "downloads" is a client-side-only sort — send empty string so the server
+  // "downloads" and "language" sort in the browser — send no sort so the server
   // doesn't receive an invalid sort parameter.
-  const serverSort = advancedFilters.sort === 'downloads' ? '' : advancedFilters.sort;
+  const serverSort = isClientSideSort(advancedFilters.sort) ? '' : advancedFilters.sort;
   if (serverSort) {
     queryParts.push(`sort=${encodeURIComponent(serverSort)}`);
   }
