@@ -5,6 +5,7 @@ import type { Book, ButtonStateInfo, DisplayField } from '../../types';
 import { getDownloadsCount } from '../../types';
 import { bookSupportsTargets } from '../../utils/bookTargetLoader';
 import { getFormatColor, getLanguageColor } from '../../utils/colorMaps';
+import { FILE_BATCH_SIZE } from '../../utils/fileResults';
 import { BookActionButton } from '../BookActionButton';
 import { BookTargetDropdown } from '../BookTargetDropdown';
 import { DisplayFieldIcon, DisplayFieldBadge, LibraryBadge } from '../shared';
@@ -157,7 +158,8 @@ export const ListView = ({
               className="hover-row animate-pop-up relative w-full px-1.5 py-1.5 transition-colors duration-200 sm:px-2 sm:py-2"
               style={{
                 zIndex: openDropdownBookId === book.id ? 30 : undefined,
-                animationDelay: `${index * 50}ms`,
+                // Restart the stagger for each batch, so rows revealed later appear at once.
+                animationDelay: `${(index % FILE_BATCH_SIZE) * 50}ms`,
                 animationFillMode: 'both',
               }}
               role="article"
@@ -202,6 +204,9 @@ export const ListView = ({
                   <p className="truncate text-[10px] text-gray-600 min-[400px]:text-xs sm:text-sm dark:text-gray-300">
                     {book.author || 'Unknown author'}
                     {book.year && <span className="sm:hidden"> • {book.year}</span>}
+                    {searchMode !== 'universal' && book.source_display_name && (
+                      <span className="opacity-70"> • {book.source_display_name}</span>
+                    )}
                   </p>
                   <LibraryBadge library={book.library} className="mt-0.5" />
                 </div>

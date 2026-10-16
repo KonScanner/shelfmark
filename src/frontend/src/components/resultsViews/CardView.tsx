@@ -222,6 +222,12 @@ export const CardView = ({
                     </>
                   ) : null;
                 })()}
+              {book.source_display_name && (
+                <>
+                  <span>•</span>
+                  <span>{book.source_display_name}</span>
+                </>
+              )}
             </div>
           )}
         </div>

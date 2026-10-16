@@ -69,7 +69,25 @@ interface SourceBackedBookData {
   info?: Record<string, string | string[]>;
   description?: unknown;
   source_url?: unknown;
+  md5?: unknown;
+  format_variants?: unknown;
 }
+
+const MD5_PATTERN = /^[0-9a-f]{32}$/;
+
+const toMd5 = (value: unknown): string | undefined => {
+  const text = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return MD5_PATTERN.test(text) ? text : undefined;
+};
+
+const toFormatVariants = (value: unknown): Record<string, string> | undefined => {
+  if (!isRecord(value) || Array.isArray(value)) return undefined;
+  const variants: Record<string, string> = {};
+  for (const [format, id] of Object.entries(value)) {
+    if (typeof id === 'string' && id) variants[format.toLowerCase()] = id;
+  }
+  return Object.keys(variants).length > 0 ? variants : undefined;
+};
 
 /**
  * Transform raw metadata book data to the frontend Book format.
@@ -122,7 +140,14 @@ const toOptionalText = (value: unknown): string | undefined => {
   return undefined;
 };
 
+// Source names whose display form is not a plain title-case of the identifier.
+const SOURCE_DISPLAY_NAMES: Record<string, string> = {
+  searxng: 'SearXNG',
+};
+
 const humanizeSourceName = (value: string): string => {
+  const known = SOURCE_DISPLAY_NAMES[value];
+  if (known) return known;
   return value
     .split('_')
     .filter(Boolean)
@@ -171,6 +196,8 @@ const transformSourceBackedDataToBook = (data: SourceBackedBookData): Book => {
     provider_display_name: displayName,
     provider_id: data.id,
     source_url: toOptionalText(data.source_url),
+    md5: toMd5(data.md5),
+    format_variants: toFormatVariants(data.format_variants),
   };
 };
 
@@ -191,6 +218,9 @@ export function transformReleaseToDirectBook(release: Release): Book {
     info: parseBookInfo(extra.info),
     description: extra.description,
     source_url: release.info_url || release.download_url,
+    // Anna's Archive ids are md5s; Libgen carries it in extra.
+    md5: extra.md5 ?? release.source_id,
+    format_variants: extra.format_variants,
   });
 }
 

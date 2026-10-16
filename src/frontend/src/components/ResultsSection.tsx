@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 
 import { useSearchMode } from '../contexts/SearchModeContext';
 import { SORT_OPTIONS } from '../data/filterOptions';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import type { Book, ButtonStateInfo, SortOption } from '../types';
+import { FILE_BATCH_SIZE } from '../utils/fileResults';
 import { Dropdown } from './Dropdown';
 import { CardView } from './resultsViews/CardView';
 import { CompactView } from './resultsViews/CompactView';
@@ -35,6 +36,11 @@ interface ResultsSectionProps {
   totalFound?: number;
   // Direct mode: total result count from release sources
   directTotalResults?: number | string | null;
+  // Direct mode paging: rows to show, whether the sources may have more, and the
+  // callback that shows the next batch (and loads the next page when needed)
+  directVisibleCount?: number;
+  directHasMore?: boolean;
+  onRevealMoreDirect?: () => void;
   onShowToast?: (message: string, type: 'success' | 'error' | 'info') => void;
   resultsSourceUrl?: string;
 }
@@ -56,10 +62,16 @@ export const ResultsSection = ({
   onLoadMore,
   totalFound,
   directTotalResults,
+  directVisibleCount,
+  directHasMore = false,
+  onRevealMoreDirect,
   onShowToast,
   resultsSourceUrl,
 }: ResultsSectionProps) => {
   const { searchMode } = useSearchMode();
+  const isDirectPaged = searchMode === 'direct' && directVisibleCount !== undefined;
+  const shownBooks = isDirectPaged ? books.slice(0, directVisibleCount) : books;
+  const canRevealMore = isDirectPaged && (shownBooks.length < books.length || directHasMore);
   const activeViewClasses =
     searchMode === 'universal'
       ? 'bg-emerald-600 text-white hover:bg-emerald-700'
@@ -126,8 +138,8 @@ export const ResultsSection = ({
           {(() => {
             const count = directTotalResults ?? null;
             if (count === null || count === 0) return null;
-            const isCapped = directTotalResults === '500+';
-            const totalCount = isCapped ? 500 : Number(count);
+            const isCapped = typeof count === 'string' && count.endsWith('+');
+            const totalCount = isCapped ? Number.parseInt(count, 10) : Number(count);
             // AA-style: show page range + total
             if (totalCount === 1) {
               return (
@@ -136,8 +148,10 @@ export const ResultsSection = ({
                 </span>
               );
             }
-            const shownEnd = Math.min(totalCount, 50);
-            const totalStr = isCapped ? '500+' : String(totalCount);
+            // Later pages can load more rows than the sources first reported.
+            const knownTotal = Math.max(totalCount, books.length);
+            const shownEnd = Math.min(knownTotal, shownBooks.length);
+            const totalStr = isCapped ? `${knownTotal}+` : String(knownTotal);
             return (
               <span className="mx-2 mt-4 px-2 text-xs whitespace-nowrap text-gray-500 dark:text-gray-400">
                 Results 1-{shownEnd} ({totalStr} Total)
@@ -231,7 +245,7 @@ export const ResultsSection = ({
       </div>
       {viewMode === 'list' ? (
         <ListView
-          books={books}
+          books={shownBooks}
           onDetails={onDetails}
           onDownload={onDownload}
           onGetReleases={onGetReleases}
@@ -245,9 +259,10 @@ export const ResultsSection = ({
           id="results-grid"
           className={`grid gap-8 ${!isDesktop ? GRID_CLASSES.mobile : GRID_CLASSES[viewMode]}`}
         >
-          {books.map((book, index) => {
+          {shownBooks.map((book, index) => {
             const shouldUseCardLayout = isDesktop && viewMode === 'card';
-            const animationDelay = index * 50;
+            // Restart the stagger for each batch, so rows revealed later appear at once.
+            const animationDelay = (index % FILE_BATCH_SIZE) * 50;
             // Use appropriate button state function based on search mode
             const buttonState =
               searchMode === 'universal'
@@ -284,6 +299,15 @@ export const ResultsSection = ({
         </div>
       )}
       {books.length === 0 && <div className="mt-4 text-sm opacity-80">No results found.</div>}
+
+      {isDirectPaged && onRevealMoreDirect && (
+        <DirectPagingFooter
+          canRevealMore={canRevealMore}
+          isLoadingMore={isLoadingMore ?? false}
+          shownCount={shownBooks.length}
+          onRevealMore={onRevealMoreDirect}
+        />
+      )}
 
       {/* Load More button (universal mode pagination) */}
       {searchMode === 'universal' && hasMore && onLoadMore && (
@@ -338,6 +362,68 @@ interface SortControlProps {
   onChange: (value: string) => void;
   metadataSortOptions?: SortOption[];
 }
+
+interface DirectPagingFooterProps {
+  canRevealMore: boolean;
+  isLoadingMore: boolean;
+  shownCount: number;
+  onRevealMore: () => void;
+}
+
+/**
+ * Infinite scroll for direct results: shows the next batch when the end of the list
+ * comes near, with a button for keyboard users and for when the observer cannot fire.
+ */
+const DirectPagingFooter = ({
+  canRevealMore,
+  isLoadingMore,
+  shownCount,
+  onRevealMore,
+}: DirectPagingFooterProps) => {
+  // A callback ref, not an effect: the observer lives exactly as long as the sentinel.
+  // The sentinel is re-keyed per batch, so a fresh observer reports the current
+  // position at once and a sentinel still on screen after a short batch keeps going.
+  const observeSentinel = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node || typeof IntersectionObserver === 'undefined') return undefined;
+      const observer = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) onRevealMore();
+        },
+        { rootMargin: '600px 0px' },
+      );
+      observer.observe(node);
+      return () => observer.disconnect();
+    },
+    [onRevealMore],
+  );
+
+  if (!canRevealMore && !isLoadingMore) {
+    return shownCount > FILE_BATCH_SIZE ? (
+      <div className="mt-10 text-center text-sm text-gray-500 dark:text-gray-400">
+        End of results
+      </div>
+    ) : null;
+  }
+
+  return (
+    <div className="mt-10 flex flex-col items-center gap-2">
+      {!isLoadingMore && <div key={shownCount} ref={observeSentinel} aria-hidden="true" />}
+      <button
+        type="button"
+        onClick={onRevealMore}
+        disabled={isLoadingMore}
+        className={`rounded-full px-3 py-2 text-sm font-medium transition-all duration-200 ${
+          isLoadingMore
+            ? 'cursor-wait bg-gray-300 text-gray-500 dark:bg-gray-600 dark:text-gray-400'
+            : 'bg-sky-700 text-white hover:bg-sky-800'
+        }`}
+      >
+        {isLoadingMore ? 'Loading more results...' : 'Show more'}
+      </button>
+    </div>
+  );
+};
 
 // Default universal mode sort options (fallback if not provided by API)
 const DEFAULT_UNIVERSAL_SORT_OPTIONS: SortOption[] = [

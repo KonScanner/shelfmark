@@ -4,7 +4,7 @@ import {
   getConfig,
   getSearchTimeoutMs,
   setSearchTimeoutFromConfig,
-  searchBooks,
+  searchSourceFiles,
   isApiResponseError,
 } from '../services/api';
 
@@ -116,7 +116,7 @@ describe('release search timeout', () => {
       }),
     );
 
-    await searchBooks('q=dune');
+    await searchSourceFiles('direct_download', 'q=dune');
 
     // The request carries an abort signal, and it is not yet aborted: the point is that
     // the clock it runs on is the server's, not a constant.
@@ -140,7 +140,7 @@ describe('server-provided failure messages', () => {
       vi.fn(() => Promise.resolve(jsonResponse({ error: sentence }, 503))),
     );
 
-    const error = await searchBooks('q=dune').catch((e: unknown) => e);
+    const error = await searchSourceFiles('direct_download', 'q=dune').catch((e: unknown) => e);
 
     expect(isApiResponseError(error)).toBe(true);
     if (isApiResponseError(error)) {
@@ -154,7 +154,7 @@ describe('server-provided failure messages', () => {
       vi.fn(() => Promise.resolve(jsonResponse({}, 503))),
     );
 
-    const error = await searchBooks('q=dune').catch((e: unknown) => e);
+    const error = await searchSourceFiles('direct_download', 'q=dune').catch((e: unknown) => e);
 
     expect(isApiResponseError(error)).toBe(true);
     if (isApiResponseError(error)) {
@@ -172,7 +172,7 @@ describe('server-provided failure messages', () => {
       vi.fn(() => Promise.resolve(jsonResponse({ message: '   ' }, 503))),
     );
 
-    const error = await searchBooks('q=dune').catch((e: unknown) => e);
+    const error = await searchSourceFiles('direct_download', 'q=dune').catch((e: unknown) => e);
 
     expect(isApiResponseError(error)).toBe(true);
     if (isApiResponseError(error)) {
@@ -187,7 +187,7 @@ describe('server-provided failure messages', () => {
       vi.fn(() => Promise.resolve(jsonResponse({ message: '', error: 'the real reason' }, 503))),
     );
 
-    const error = await searchBooks('q=dune').catch((e: unknown) => e);
+    const error = await searchSourceFiles('direct_download', 'q=dune').catch((e: unknown) => e);
 
     expect(isApiResponseError(error)).toBe(true);
     if (isApiResponseError(error)) {

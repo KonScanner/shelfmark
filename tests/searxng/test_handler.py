@@ -21,7 +21,7 @@ def _fake_prepare_public_url(url: str) -> str | None:
 @pytest.fixture(autouse=True)
 def _offline_public_url_check():
     with patch(
-        "shelfmark.release_sources.searxng.handler.prepare_public_url",
+        "shelfmark.download.public_file.prepare_public_url",
         side_effect=_fake_prepare_public_url,
     ):
         yield
@@ -54,8 +54,8 @@ class TestDownload:
         payload = _response([b"a" * 2048], total=2048)
         task = _task()
         with (
-            patch("shelfmark.release_sources.searxng.handler.TMP_DIR", tmp_path),
-            patch("shelfmark.release_sources.searxng.handler.requests.get", return_value=payload),
+            patch("shelfmark.download.public_file.TMP_DIR", tmp_path),
+            patch("shelfmark.download.public_file.requests.get", return_value=payload),
         ):
             result = SearXNGHandler().download(
                 task, threading.Event(), lambda _p: None, lambda _s, _m: None
@@ -79,8 +79,8 @@ class TestDownload:
     def test_too_small_file_rejected(self, tmp_path):
         payload = _response([b"ab"], total=2)
         with (
-            patch("shelfmark.release_sources.searxng.handler.TMP_DIR", tmp_path),
-            patch("shelfmark.release_sources.searxng.handler.requests.get", return_value=payload),
+            patch("shelfmark.download.public_file.TMP_DIR", tmp_path),
+            patch("shelfmark.download.public_file.requests.get", return_value=payload),
         ):
             result = SearXNGHandler().download(
                 _task(), threading.Event(), lambda _p: None, lambda _s, _m: None
@@ -93,8 +93,8 @@ class TestDownload:
         cancel_flag.set()
         payload = _response([b"a" * 4096], total=4096)
         with (
-            patch("shelfmark.release_sources.searxng.handler.TMP_DIR", tmp_path),
-            patch("shelfmark.release_sources.searxng.handler.requests.get", return_value=payload),
+            patch("shelfmark.download.public_file.TMP_DIR", tmp_path),
+            patch("shelfmark.download.public_file.requests.get", return_value=payload),
         ):
             result = SearXNGHandler().download(
                 _task(), cancel_flag, lambda _p: None, lambda _s, _m: None
@@ -107,7 +107,7 @@ class TestDownload:
 
         status_calls: list[tuple[str, str | None]] = []
         with patch(
-            "shelfmark.release_sources.searxng.handler.requests.get",
+            "shelfmark.download.public_file.requests.get",
             side_effect=requests_module.ConnectionError("down"),
         ):
             result = SearXNGHandler().download(
@@ -133,7 +133,7 @@ class TestPublicHostGuard:
     )
     def test_non_public_url_blocked_without_request(self, url):
         status_calls: list[tuple[str, str | None]] = []
-        with patch("shelfmark.release_sources.searxng.handler.requests.get") as fake_get:
+        with patch("shelfmark.download.public_file.requests.get") as fake_get:
             result = SearXNGHandler().download(
                 _task(url),
                 threading.Event(),
@@ -149,7 +149,7 @@ class TestPublicHostGuard:
         redirect.is_redirect = True
         redirect.headers = {"location": "http://10.0.0.5/secret.pdf"}
         with patch(
-            "shelfmark.release_sources.searxng.handler.requests.get", return_value=redirect
+            "shelfmark.download.public_file.requests.get", return_value=redirect
         ) as fake_get:
             result = SearXNGHandler().download(
                 _task(), threading.Event(), lambda _p: None, lambda _s, _m: None
@@ -163,9 +163,9 @@ class TestPublicHostGuard:
         redirect.headers = {"location": "https://cdn.example.org/book.pdf"}
         payload = _response([b"a" * 2048], total=2048)
         with (
-            patch("shelfmark.release_sources.searxng.handler.TMP_DIR", tmp_path),
+            patch("shelfmark.download.public_file.TMP_DIR", tmp_path),
             patch(
-                "shelfmark.release_sources.searxng.handler.requests.get",
+                "shelfmark.download.public_file.requests.get",
                 side_effect=[redirect, payload],
             ) as fake_get,
         ):
@@ -179,11 +179,9 @@ class TestPublicHostGuard:
         payload = _response([b"a" * 2048], total=2048)
         proxies = {"https": "socks5://proxy:1080", "http": "socks5://proxy:1080"}
         with (
-            patch("shelfmark.release_sources.searxng.handler.TMP_DIR", tmp_path),
-            patch("shelfmark.release_sources.searxng.handler.get_proxies", return_value=proxies),
-            patch(
-                "shelfmark.release_sources.searxng.handler.requests.get", return_value=payload
-            ) as fake_get,
+            patch("shelfmark.download.public_file.TMP_DIR", tmp_path),
+            patch("shelfmark.download.public_file.get_proxies", return_value=proxies),
+            patch("shelfmark.download.public_file.requests.get", return_value=payload) as fake_get,
         ):
             SearXNGHandler().download(
                 _task(), threading.Event(), lambda _p: None, lambda _s, _m: None
