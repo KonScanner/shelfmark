@@ -508,16 +508,19 @@ _SOURCES: dict[str, type[ReleaseSource]] = {}
 _HANDLERS: dict[str, type[DownloadHandler]] = {}
 _BUILTIN_SOURCE_MODULES = (
     "shelfmark.release_sources.audiobookbay",
+    "shelfmark.release_sources.benyehuda",
     "shelfmark.release_sources.direct_download",
     "shelfmark.release_sources.irc",
     "shelfmark.release_sources.internet_archive",
     "shelfmark.release_sources.jackett",
     "shelfmark.release_sources.libgen",
     "shelfmark.release_sources.newznab",
+    "shelfmark.release_sources.opds",
     "shelfmark.release_sources.prowlarr",
     "shelfmark.release_sources.searxng",
     "shelfmark.release_sources.slskd",
     "shelfmark.release_sources.webshare",
+    "shelfmark.release_sources.zlibrary",
 )
 _builtin_source_state = {"loaded": False}
 
@@ -678,6 +681,16 @@ def plan_query_candidates(plan: ReleaseSearchPlan, book: BookMetadata) -> list[s
             seen.add(query.lower())
             queries.append(query)
     return queries
+
+
+def wanted_formats(plan: ReleaseSearchPlan) -> list[str]:
+    """Return the formats a search wants, best first: the browse filter, else settings."""
+    # Imported here: direct_download imports this module while it registers.
+    from shelfmark.release_sources.direct_download.common import get_supported_formats
+
+    filters = getattr(plan, "source_filters", None)
+    chosen = getattr(filters, "format", None) or get_supported_formats()
+    return [fmt.strip().lower() for fmt in chosen if fmt and fmt.strip()]
 
 
 def source_supports_browse_paging(name: str) -> bool:

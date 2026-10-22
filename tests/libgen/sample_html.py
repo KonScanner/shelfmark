@@ -56,6 +56,18 @@ NO_TABLE_HTML = """
 <html><body><div id="challenge">Checking your browser...</div></body></html>
 """
 
+# libgen.li with no match (also past the last page): the search form, no results table ->
+# _parse_results returns [] (an answer, not a failed mirror). Trimmed from a live page.
+NO_MATCHES_HTML = """
+<html><head><title>Library Genesis</title></head><body>
+<form class="card p-2 needs-validation" novalidate id="formlibgen" action="index.php"
+      enctype="multipart/form-data" METHOD="GET">
+  <input autofocus type="text" class="form-control" placeholder="Input value" name="req"
+         value="zzqxjvkwplmnb9431" required>
+</form>
+</body></html>
+"""
+
 # A well-formed but empty results table -> _parse_results returns [] (accepted as final).
 EMPTY_TABLE_HTML = """
 <html><body>

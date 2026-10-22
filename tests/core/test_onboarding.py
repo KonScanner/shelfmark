@@ -88,7 +88,7 @@ def test_save_onboarding_settings_enables_selected_release_sources(monkeypatch):
 
     monkeypatch.setattr(onboarding, "save_config_file", _fake_save)
     monkeypatch.setattr(onboarding, "mark_onboarding_complete", lambda: True)
-    monkeypatch.setattr(app_config.config, "refresh", lambda: None, raising=False)
+    monkeypatch.setattr(app_config.config, "refresh", lambda **_kw: None, raising=False)
 
     result = onboarding.save_onboarding_settings(
         {
@@ -156,7 +156,7 @@ def test_save_onboarding_settings_skips_hidden_fields(monkeypatch):
 
     monkeypatch.setattr(onboarding, "save_config_file", _fake_save)
     monkeypatch.setattr(onboarding, "mark_onboarding_complete", lambda: True)
-    monkeypatch.setattr(app_config.config, "refresh", lambda: None, raising=False)
+    monkeypatch.setattr(app_config.config, "refresh", lambda **_kw: None, raising=False)
 
     result = onboarding.save_onboarding_settings(
         {

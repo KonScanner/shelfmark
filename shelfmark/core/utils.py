@@ -5,6 +5,7 @@ import importlib
 import os
 import re
 import sqlite3
+import unicodedata
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any
@@ -76,6 +77,22 @@ def normalize_http_url(
 _xmlrpc_patch_lock = Lock()
 _xmlrpc_patch_applied = False
 _XMLRPC_PATCH_ERRORS = (ImportError, AttributeError, OSError, RuntimeError)
+
+
+def fold_text(text: str) -> str:
+    """Return text in lower case with accents removed, for loose word matching."""
+    decomposed = unicodedata.normalize("NFKD", text.casefold())
+    return "".join(char for char in decomposed if not unicodedata.combining(char))
+
+
+def query_words(queries: list[str], *, min_length: int = 2) -> set[str]:
+    """Return the folded words of search queries that a match can contain.
+
+    Words shorter than ``min_length`` are left out, unless no word is that long.
+    """
+    words = {word for query in queries for word in fold_text(query).split()}
+    significant = {word for word in words if len(word) >= min_length}
+    return significant or words
 
 
 def get_hardened_xmlrpc_client() -> ModuleType:

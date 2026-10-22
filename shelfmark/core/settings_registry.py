@@ -1370,7 +1370,9 @@ def update_settings(tab_name: str, values: dict[str, Any]) -> dict[str, Any]:
         try:
             from shelfmark.core.config import config as config_obj
 
-            config_obj.refresh()
+            # Forced: a refresh earlier in the same request would otherwise swallow this
+            # one, and the app would keep serving the old values.
+            config_obj.refresh(force=True)
         except ImportError:
             config_obj = None  # Config module not yet available during initial setup
 

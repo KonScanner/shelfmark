@@ -9,6 +9,7 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import requests
 from tqdm import tqdm
+from urllib3.util.request import ACCEPT_ENCODING
 
 from shelfmark.bypass import BypassCancelledError, ChallengeNotSolvedError, cookie_store
 from shelfmark.bypass.challenge import challenge_marker
@@ -198,7 +199,10 @@ CONNECTION_ERRORS = (
 DOWNLOAD_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
     "Accept-Language": "en-US,en;q=0.5",
-    "Accept-Encoding": "gzip, deflate, br",
+    # Only what urllib3 can decode here: it adds "br" only when a Brotli package is
+    # installed. Cloudflare-fronted mirrors (libgen.la, libgen.gl) honour "br", so asking
+    # for it without a decoder handed back raw bytes that looked like a dead mirror.
+    "Accept-Encoding": ACCEPT_ENCODING,
     "Connection": "keep-alive",
     "Upgrade-Insecure-Requests": "1",
 }

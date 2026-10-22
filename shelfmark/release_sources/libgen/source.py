@@ -21,6 +21,7 @@ from shelfmark.release_sources import (
     ReleaseColumnConfig,
     ReleaseProtocol,
     ReleaseSource,
+    SourceUnavailableError,
     browse_page,
     plan_query_candidates,
     register_source,
@@ -74,7 +75,12 @@ class LibgenSource(ReleaseSource):
         expand_search: bool = False,
         content_type: str = "ebook",
     ) -> list[Release]:
-        """Search libgen for releases of a book."""
+        """Search libgen for releases of a book.
+
+        Raises:
+            SourceUnavailableError: no mirror answered, so the caller reports a failure
+                rather than an empty result.
+        """
         if content_type != "ebook":
             return []
         if not self.is_available():
@@ -89,11 +95,19 @@ class LibgenSource(ReleaseSource):
         mirror_list = mirrors.get_libgen_mirrors()
         page = browse_page(plan)
 
-        # One search_libgen call per candidate; it already retries every mirror internally.
-        # Worst case (all mirrors dead) stays within the shared search deadline.
-        for query in queries:
+        # One search_libgen call per candidate; it already tries every mirror. When no
+        # mirror answers, the next candidate would only wait on the same dead mirrors.
+        for index, query in enumerate(queries):
             logger.info("Searching Libgen for: %s", query)
-            records = scraper.search_libgen(query, mirror_list, max_results=max_results, page=page)
+            try:
+                records = scraper.search_libgen(
+                    query, mirror_list, max_results=max_results, page=page
+                )
+            except scraper.LibgenUnavailableError as error:
+                logger.warning("Libgen search failed for '%s': %s", query, error)
+                if index == 0:
+                    raise SourceUnavailableError(str(error)) from error
+                return []
             if records:
                 return [self._record_to_release(record) for record in records]
         return []

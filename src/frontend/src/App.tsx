@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { useState, useCallback, useRef, useMemo } from 'react';
+import { lazy, Suspense, useState, useCallback, useRef, useMemo } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 
 import { ActivitySidebar } from './components/activity';
@@ -89,6 +89,7 @@ import type {
 } from './types';
 import { isMetadataBook } from './types';
 import { formatActingAsUserName } from './utils/actingAsUser';
+import { ANNAS_ARCHIVE_RECORD_SOURCE, type ActivityGroup } from './utils/annasActivity';
 import { buildLoginRedirectPath, getReturnToFromSearch } from './utils/authRedirect';
 import { withBasePath } from './utils/basePath';
 import { emitBookTargetChange } from './utils/bookTargetEvents';
@@ -103,6 +104,7 @@ import { getEffectiveMetadataSort } from './utils/metadataSort';
 import { isRecord } from './utils/objectHelpers';
 import { policyTrace } from './utils/policyTrace';
 import { buildQueryTargets, findQueryTarget, getDefaultQueryTargetKey } from './utils/queryTargets';
+import { RECORD_LOOKUP_TIMEOUT_MS, pickRecordSearch, runRecordSearch } from './utils/recordSearch';
 import { buildReleaseDownloadPayload, type ReleaseDownloadOptions } from './utils/releasePayload';
 import { applyRequestNoteToPayload } from './utils/requestConfirmation';
 import { bookFromRequestData } from './utils/requestFulfil';
@@ -124,6 +126,11 @@ import { buildUrlSearchHash } from './utils/urlSearchHash';
 
 // eslint-disable-next-line import/no-unassigned-import -- global app stylesheet is loaded for side effects
 import './styles.css';
+
+// Optional home-page bars: load their code only after the search page is up.
+const AnnasActivity = lazy(() =>
+  import('./components/AnnasActivity').then((module) => ({ default: module.AnnasActivity })),
+);
 
 const ACTIVITY_SIDEBAR_PINNED_STORAGE_KEY = 'activity-sidebar-pinned';
 const getInitialPinnedPreference = (): boolean => {
@@ -1027,6 +1034,36 @@ function App() {
   const handleSettingsSaved = useCallback(() => {
     void loadConfig('settings-saved');
   }, [loadConfig]);
+
+  // A title in the home-page activity bars: search Shelfmark for that file. Only its
+  // Anna's Archive page lists the ISBN, and that page is often slow or blocked, so wait a
+  // bounded time for it and search by the title the bar already shows when it does not come.
+  const handleSearchAnnasFile = async (group: ActivityGroup, signal: AbortSignal) => {
+    let record: Book | null = null;
+    try {
+      record = await getSourceRecordInfo(
+        ANNAS_ARCHIVE_RECORD_SOURCE,
+        group.md5,
+        AbortSignal.any([signal, AbortSignal.timeout(RECORD_LOOKUP_TIMEOUT_MS)]),
+      );
+    } catch (error) {
+      if (!signal.aborted) {
+        console.warn("Anna's Archive file page did not load; searching by title instead:", error);
+      }
+    }
+    // Another search started while this waited: do not replace it.
+    if (signal.aborted) return;
+
+    const search = pickRecordSearch(record, group.title);
+    if (search) {
+      runRecordSearch(search);
+      return;
+    }
+    showToast(
+      "Anna's Archive did not answer for this file. Use the arrow next to it to open its page.",
+      'error',
+    );
+  };
 
   // Show book details
   const handleShowDetails = async (id: string): Promise<void> => {
@@ -2645,6 +2682,12 @@ function App() {
             onMetadataProviderChange={handleMetadataProviderChange}
             isAdmin={requestRoleIsAdmin}
           />
+
+          {isInitialState && (
+            <Suspense fallback={null}>
+              <AnnasActivity onSearchFile={handleSearchAnnasFile} />
+            </Suspense>
+          )}
 
           {showResultsTabs && (
             <ResultsTabs

@@ -30,12 +30,17 @@ from shelfmark.core.settings_registry import (
 from shelfmark.core.text_match import strip_alternate_title
 from shelfmark.download.network import get_ssl_verify, new_pooled_session
 from shelfmark.metadata_providers import (
+    REVIEW_STAR_BUCKETS,
     BookMetadata,
+    BookReview,
     DisplayField,
     DynamicSelectSearchField,
     MetadataCapability,
     MetadataProvider,
     MetadataSearchOptions,
+    ReviewPage,
+    ReviewQuery,
+    ReviewSort,
     SearchField,
     SearchResult,
     SearchType,
@@ -477,6 +482,106 @@ query GetAuthorBooks($authorId: Int!, $limit: Int!, $offset: Int!) {
     }
 }
 """
+
+BOOK_REVIEWS_QUERY = """
+query BookReviews(
+    $where: user_books_bool_exp!,
+    $all: user_books_bool_exp!,
+    $spoilers: user_books_bool_exp!,
+    $stars_1: user_books_bool_exp!,
+    $stars_2: user_books_bool_exp!,
+    $stars_3: user_books_bool_exp!,
+    $stars_4: user_books_bool_exp!,
+    $stars_5: user_books_bool_exp!,
+    $order_by: [user_books_order_by!],
+    $limit: Int!,
+    $offset: Int!
+) {
+    filtered: user_books_aggregate(where: $where) { aggregate { count } }
+    all: user_books_aggregate(where: $all) { aggregate { count } }
+    spoilers: user_books_aggregate(where: $spoilers) { aggregate { count } }
+    stars_1: user_books_aggregate(where: $stars_1) { aggregate { count } }
+    stars_2: user_books_aggregate(where: $stars_2) { aggregate { count } }
+    stars_3: user_books_aggregate(where: $stars_3) { aggregate { count } }
+    stars_4: user_books_aggregate(where: $stars_4) { aggregate { count } }
+    stars_5: user_books_aggregate(where: $stars_5) { aggregate { count } }
+    user_books(where: $where, order_by: $order_by, limit: $limit, offset: $offset) {
+        id
+        rating
+        reviewed_at
+        likes_count
+        review_has_spoilers
+        review_raw
+        user {
+            username
+            name
+            image {
+                url
+            }
+        }
+    }
+}
+"""
+
+# Hardcover's public privacy setting; reviews behind any other setting stay hidden.
+HARDCOVER_PUBLIC_PRIVACY_ID = 1
+HARDCOVER_MAX_REVIEWS_PAGE_SIZE = 25
+HARDCOVER_REVIEW_ORDER: dict[ReviewSort, list[dict[str, str]]] = {
+    ReviewSort.POPULAR: [
+        {"likes_count": "desc"},
+        {"reviewed_at": "desc_nulls_last"},
+        {"id": "desc"},
+    ],
+    ReviewSort.NEWEST: [{"reviewed_at": "desc_nulls_last"}, {"id": "desc"}],
+    ReviewSort.OLDEST: [{"reviewed_at": "asc_nulls_last"}, {"id": "asc"}],
+    ReviewSort.HIGHEST: [{"rating": "desc_nulls_last"}, {"likes_count": "desc"}, {"id": "desc"}],
+    ReviewSort.LOWEST: [{"rating": "asc_nulls_last"}, {"likes_count": "desc"}, {"id": "desc"}],
+}
+
+
+def _review_star_filter(stars: int) -> dict[str, Any]:
+    """Return the rating range for a star bucket (half stars round down, 0.5 counts as 1)."""
+    if stars <= 1:
+        return {"rating": {"_gt": 0, "_lt": 2}}
+    if stars >= max(REVIEW_STAR_BUCKETS):
+        return {"rating": {"_gte": stars}}
+    return {"rating": {"_gte": stars, "_lt": stars + 1}}
+
+
+def _aggregate_count(data: dict[str, Any], key: str) -> int:
+    """Read ``{key: {aggregate: {count}}}`` from a GraphQL response."""
+    aggregate = (data.get(key) or {}).get("aggregate") or {}
+    return coerce_int(aggregate.get("count"), 0)
+
+
+def _parse_review(item: dict[str, Any]) -> BookReview | None:
+    """Convert a Hardcover ``user_books`` row into a review, or None if it has no text."""
+    text = normalize_optional_text(item.get("review_raw"))
+    review_id = item.get("id")
+    if not text or review_id is None:
+        return None
+
+    user = item.get("user") or {}
+    username = normalize_optional_text(user.get("username"))
+    rating = item.get("rating")
+    try:
+        rating_value = float(rating) if rating is not None else None
+    except TypeError, ValueError:
+        rating_value = None
+
+    return BookReview(
+        id=str(review_id),
+        text=text,
+        rating=rating_value or None,
+        reviewed_at=normalize_optional_text(item.get("reviewed_at")),
+        likes=coerce_int(item.get("likes_count"), 0),
+        has_spoilers=coerce_bool(item.get("review_has_spoilers"), default=False),
+        username=username,
+        display_name=normalize_optional_text(user.get("name")) or username,
+        avatar_url=normalize_optional_text((user.get("image") or {}).get("url")),
+        profile_url=f"https://hardcover.app/@{username}" if username else None,
+    )
+
 
 HARDCOVER_STATUS_PREFIX = "status:"
 HARDCOVER_STATUSES: list[dict] = [
@@ -2585,6 +2690,67 @@ class HardcoverProvider(MetadataProvider):
         except AttributeError, KeyError, TypeError, ValueError:
             logger.exception("Hardcover search error")
             return SearchResult(books=[], page=options.page, total_found=0, has_more=False)
+
+    @cacheable(ttl_key="METADATA_CACHE_SEARCH_TTL", ttl_default=300, key_prefix="hardcover:reviews")
+    def get_book_reviews(self, book_id: str, query: ReviewQuery) -> ReviewPage:
+        """Get one page of public Hardcover reviews, with star and spoiler counts."""
+        if not self.api_key:
+            msg = "Hardcover API key not configured"
+            raise RuntimeError(msg)
+
+        book_id_int = coerce_int(book_id, 0)
+        if book_id_int < 1:
+            msg = "book_id must be a valid Hardcover book id"
+            raise ValueError(msg)
+
+        page = max(query.page, 1)
+        limit = min(max(query.limit, 1), HARDCOVER_MAX_REVIEWS_PAGE_SIZE)
+
+        base: dict[str, Any] = {
+            "book_id": {"_eq": book_id_int},
+            "has_review": {"_eq": True},
+            "privacy_setting_id": {"_eq": HARDCOVER_PUBLIC_PRIVACY_ID},
+        }
+        where = dict(base)
+        if query.stars is not None:
+            where.update(_review_star_filter(query.stars))
+        if query.hide_spoilers:
+            where["review_has_spoilers"] = {"_eq": False}
+
+        variables: dict[str, Any] = {
+            "where": where,
+            "all": base,
+            "spoilers": {**base, "review_has_spoilers": {"_eq": True}},
+            "order_by": HARDCOVER_REVIEW_ORDER[query.sort],
+            "limit": limit,
+            "offset": (page - 1) * limit,
+        }
+        for stars in REVIEW_STAR_BUCKETS:
+            variables[f"stars_{stars}"] = {**base, **_review_star_filter(stars)}
+
+        data = self._execute_query(BOOK_REVIEWS_QUERY, variables, raise_on_error=True)
+        if not isinstance(data, dict):
+            msg = "Hardcover could not load reviews"
+            raise RuntimeError(msg)  # noqa: TRY004 - a bad payload is an upstream failure
+
+        reviews = [
+            review
+            for item in data.get("user_books") or []
+            if isinstance(item, dict) and (review := _parse_review(item)) is not None
+        ]
+        total = _aggregate_count(data, "filtered")
+        return ReviewPage(
+            reviews=reviews,
+            page=page,
+            total=total,
+            has_more=page * limit < total,
+            review_count=_aggregate_count(data, "all"),
+            spoiler_count=_aggregate_count(data, "spoilers"),
+            star_counts={
+                str(stars): _aggregate_count(data, f"stars_{stars}")
+                for stars in REVIEW_STAR_BUCKETS
+            },
+        )
 
     @cacheable(ttl_key="METADATA_CACHE_BOOK_TTL", ttl_default=600, key_prefix="hardcover:book")
     def get_book(self, book_id: str) -> BookMetadata | None:

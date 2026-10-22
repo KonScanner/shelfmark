@@ -7,6 +7,9 @@ needed. All shelfmark-stateful behaviour lives in source.py/handler.py.
 """
 
 import re
+import threading
+import time
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from http import HTTPStatus
 from urllib.parse import quote, urljoin, urlsplit
 
@@ -23,9 +26,30 @@ logger = setup_logger(__name__)
 
 # The libgen.li results table. Both full (9-cell) and compact (5-cell) rows live in it.
 _RESULTS_TABLE_ID = "tablelibgen"
+# The search form on every libgen.li page: present on a page without results, absent on a
+# challenge or error page.
+_SEARCH_FORM_ID = "formlibgen"
 
 # md5 appears in the row's Mirrors cell as get.php?md5=<hash> and an AA /md5/<hash> link.
 _MD5_RE = re.compile(r"md5=([0-9a-f]{32})", re.IGNORECASE)
+
+# A mirror that does not answer is often down for a long time (some stop answering at
+# all, others lose their DNS name). Skip it for this long after a failure, so a dead
+# mirror costs one timeout per period, not one per search and per query text.
+_MIRROR_COOLDOWN_SECONDS = 120.0
+
+# A search starts on the first mirror, and starts the next one each time this many
+# seconds pass without an answer. A healthy mirror answers first and the others are not
+# asked; a hung mirror delays the search by this much, not by its full read timeout.
+_MIRROR_STAGGER_SECONDS = 4.0
+
+_mirror_failed_at: dict[str, float] = {}
+_mirror_health_lock = threading.Lock()
+
+
+class LibgenUnavailableError(Exception):
+    """No configured mirror answered the search."""
+
 
 # Patterns for the keyed GET link on an ads.php page. Kept in sync with the resolution
 # libgen download has always used (direct_download._LIBGEN_GET_PATTERNS); duplicated here
@@ -102,6 +126,34 @@ def fetch_page(url: str, timeout: tuple[int, int] = (5, 15)) -> str | None:
     return response.text
 
 
+def _mirror_is_cooling(base: str, now: float) -> bool:
+    with _mirror_health_lock:
+        failed_at = _mirror_failed_at.get(base)
+    return failed_at is not None and now - failed_at < _MIRROR_COOLDOWN_SECONDS
+
+
+def _record_mirror_health(base: str, *, answered: bool) -> None:
+    with _mirror_health_lock:
+        if answered:
+            _mirror_failed_at.pop(base, None)
+        else:
+            _mirror_failed_at[base] = time.monotonic()
+
+
+def _search_mirror(
+    base: str, query: str, max_results: int, page: int, timeout: tuple[int, int]
+) -> list[BrowseRecord] | None:
+    """Search one mirror; return its records, or None when it gave no results table."""
+    # covers=on adds a leading thumbnail column; _parse_results skips it for the fields.
+    url = f"{base.rstrip('/')}/index.php?req={quote(query)}&res={max_results}&covers=on"
+    if page > 1:
+        url += f"&page={page}"
+    html = fetch_page(url, timeout)
+    records = _parse_results(html, base) if html is not None else None
+    _record_mirror_health(base, answered=records is not None)
+    return records
+
+
 def search_libgen(
     query: str,
     mirrors: list[str],
@@ -110,25 +162,51 @@ def search_libgen(
     page: int = 1,
     timeout: tuple[int, int] = (5, 15),
 ) -> list[BrowseRecord]:
-    """Search each mirror's catalogue until one answers with a results table.
+    """Search the mirrors and return the records of the first one that answers.
 
-    The first mirror that returns a parseable ``#tablelibgen`` wins -- including when that
-    table is empty ([] is returned as final). Mirrors can lag independently, but falling
-    through on every empty result would multiply latency under the shared search deadline,
-    so an empty-but-well-formed answer is trusted rather than re-queried elsewhere.
+    Mirrors start one after another, ``_MIRROR_STAGGER_SECONDS`` apart, or at once when
+    the mirror before fails. The first parseable ``#tablelibgen`` wins, also when it is
+    empty: falling through on an empty answer would multiply the latency of every search
+    that has no match. Mirrors that failed recently are not asked.
+
+    Raises:
+        LibgenUnavailableError: no mirror answered, so the caller can report a failure
+            rather than an empty result.
     """
-    for base in mirrors:
-        # covers=on adds a leading thumbnail column; _parse_results skips it for the fields.
-        url = f"{base.rstrip('/')}/index.php?req={quote(query)}&res={max_results}&covers=on"
-        if page > 1:
-            url += f"&page={page}"
-        html = fetch_page(url, timeout)
-        if html is None:
-            continue
-        records = _parse_results(html, base)
-        if records is not None:
-            return records
-    return []
+    now = time.monotonic()
+    queue = [base for base in mirrors if not _mirror_is_cooling(base, now)]
+    if not queue:
+        msg = (
+            f"Every Libgen mirror failed in the last {_MIRROR_COOLDOWN_SECONDS:.0f}s: "
+            f"{', '.join(mirrors) or 'none configured'}"
+        )
+        raise LibgenUnavailableError(msg)
+
+    asked = list(queue)
+    executor = ThreadPoolExecutor(max_workers=len(queue))
+    running: set[Future[list[BrowseRecord] | None]] = set()
+    try:
+        while queue or running:
+            # Reached at the start, when a mirror failed, or when the gap ran out.
+            if queue:
+                running.add(
+                    executor.submit(_search_mirror, queue.pop(0), query, max_results, page, timeout)
+                )
+            done, running = wait(
+                running,
+                timeout=_MIRROR_STAGGER_SECONDS if queue else None,
+                return_when=FIRST_COMPLETED,
+            )
+            for future in done:
+                records = future.result()
+                if records is not None:
+                    return records
+    finally:
+        # Mirrors still running finish in the background and only update their health.
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    msg = f"No Libgen mirror answered: {', '.join(asked)}"
+    raise LibgenUnavailableError(msg)
 
 
 def fetch_record_by_md5(
@@ -185,8 +263,10 @@ def _cover_url(cell: Tag, base_url: str) -> str | None:
 def _parse_results(html: str, base_url: str) -> list[BrowseRecord] | None:
     """Parse a libgen search page.
 
-    Returns None when the page has no results table (a challenge/error page -> the caller
-    tries the next mirror), or a list (possibly empty) when the table is present.
+    Returns a list (possibly empty) for a libgen page, or None for anything else (a
+    challenge/error page -> the caller tries the next mirror). Libgen leaves the results
+    table out when nothing matches and on a page past the last one, so a page with the
+    search form but no table is an empty answer, not a failed mirror.
 
     Row shapes vary and carry NO rowspans: full rows have 9 cells
     ``[Title, Author, Publisher, Year, Language, Pages, Size, Ext, Mirrors]`` and compact
@@ -203,7 +283,7 @@ def _parse_results(html: str, base_url: str) -> list[BrowseRecord] | None:
     soup = BeautifulSoup(html, "html.parser")
     table = soup.find("table", id=_RESULTS_TABLE_ID)
     if not isinstance(table, Tag):
-        return None
+        return [] if soup.find("form", id=_SEARCH_FORM_ID) else None
 
     rows = table.find_all("tr")
     header_cells = rows[0].find_all(["th", "td"]) if rows else []

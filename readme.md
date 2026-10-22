@@ -146,6 +146,60 @@ Environment variables work for initial setup and Docker deployments. They serve 
 
 See the full [Environment Variables Reference](docs/environment-variables.md) for all available options.
 
+### Quick-start `.env`
+
+Copy this into a `.env` file next to your compose file (or into the service's `environment:`
+list) and keep the sources you want. Every value here can also be changed later in Settings.
+Mirror domains change often; the ones below answered on 16 October 2026.
+
+```dotenv
+# --- Search and files ---
+SEARCH_MODE=universal
+BOOK_LANGUAGE=all
+SUPPORTED_FORMATS=epub,mobi,azw3,fb2,djvu,cbz,cbr,pdf,rtf,lrf,odt
+# Files tab order: preferred languages first, then the rest ("" = most downloads)
+AA_DEFAULT_SORT=language
+LANGUAGE_SORT_ORDER=en, el, de, ru, he, fr, es
+FILES_PAGES_PER_SEARCH=2
+
+# --- Anna's Archive (Direct Download) ---
+DIRECT_DOWNLOAD_ENABLED=true
+AA_MIRROR_URLS=https://annas-archive.pk,https://annas-archive.gd,https://annas-archive.gl
+
+# --- Libgen search ---
+LIBGEN_SEARCH_ENABLED=true
+LIBGEN_MIRROR_URLS=https://libgen.li,https://libgen.bz,https://libgen.la,https://libgen.gl
+
+# --- Internet Archive (free texts only) ---
+INTERNET_ARCHIVE_ENABLED=true
+
+# --- OPDS catalogues: Project Gutenberg, Flibusta, or your own Calibre-Web / Kavita / Komga ---
+OPDS_ENABLED=true
+# Search URLs with {searchTerms}, or a catalogue root URL; add a login as https://user:pass@host/opds
+OPDS_FEEDS=https://www.gutenberg.org/ebooks/search.opds/?query={searchTerms},https://flibusta.is/opds/opensearch?searchTerm={searchTerms}
+
+# --- Z-Library (search needs no account; downloads do, about 10 a day on a free account) ---
+ZLIBRARY_SEARCH_ENABLED=true
+ZLIB_MIRROR_URLS=https://z-lib.gd,https://z-lib.gl,https://z-library.ec
+ZLIBRARY_EMAIL=you@example.com
+ZLIBRARY_PASSWORD=change-me
+
+# --- Project Ben-Yehuda (Hebrew literature; free key at https://benyehuda.org/page/api) ---
+BENYEHUDA_ENABLED=true
+BENYEHUDA_API_KEY=your-key
+
+# --- SearXNG (a self-hosted instance with the JSON format turned on) ---
+SEARXNG_ENABLED=true
+SEARXNG_BASE_URL=http://host.docker.internal:47821
+
+# --- Network privacy ---
+CUSTOM_DNS=quad9
+USE_DOH=true
+# Send all outgoing requests through a proxy (a VPN's SOCKS5 endpoint, for example)
+# PROXY_MODE=socks5
+# SOCKS5_PROXY=socks5://10.64.0.1:1080
+```
+
 Some of the additional options available in Settings:
 - **Prowlarr / Jackett** - Configure indexers to download books and audiobooks through your torrent and usenet clients
 - **Download clients** - qBittorrent, Transmission, Deluge, rTorrent, NZBGet, SABnzbd, a blackhole folder, or a debrid service (AllDebrid, Real-Debrid, TorBox, Debrid-Link)

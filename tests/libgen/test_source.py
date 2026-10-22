@@ -3,7 +3,14 @@
 import types
 from unittest.mock import patch
 
-from shelfmark.release_sources import BrowseRecord, ReleaseProtocol, plan_query_candidates
+import pytest
+
+from shelfmark.release_sources import (
+    BrowseRecord,
+    ReleaseProtocol,
+    SourceUnavailableError,
+    plan_query_candidates,
+)
 from shelfmark.release_sources.libgen import source as libgen_source
 from shelfmark.release_sources.libgen.source import LibgenSource
 from tests.libgen import sample_html as html
@@ -118,6 +125,35 @@ def test_search_maps_records_to_releases():
     assert len(releases) == 1
     assert releases[0].source_id == f"libgen:{html.MD5_A}"
     mock_search.assert_called_once()
+
+
+def _search_patches(search_side_effect):
+    return (
+        patch.object(LibgenSource, "is_available", return_value=True),
+        patch.object(
+            libgen_source.mirrors, "get_libgen_mirrors", return_value=["https://libgen.li"]
+        ),
+        patch.object(libgen_source.config, "get", side_effect=lambda k, d=None: d),
+        patch.object(libgen_source.scraper, "search_libgen", side_effect=search_side_effect),
+    )
+
+
+def test_search_reports_dead_mirrors_and_skips_the_other_query_texts():
+    dead = libgen_source.scraper.LibgenUnavailableError("No Libgen mirror answered")
+    available, mirror_list, cfg, search = _search_patches(dead)
+    plan = _plan(variants=[_variant("One Piece", "Oda")])
+    with available, mirror_list, cfg, search as mock_search:
+        with pytest.raises(SourceUnavailableError, match="No Libgen mirror answered"):
+            LibgenSource().search(_book("One Piece"), plan)
+    assert mock_search.call_count == 1
+
+
+def test_search_keeps_an_earlier_empty_answer_when_a_later_text_fails():
+    dead = libgen_source.scraper.LibgenUnavailableError("No Libgen mirror answered")
+    available, mirror_list, cfg, search = _search_patches([[], dead])
+    plan = _plan(variants=[_variant("One Piece", "Oda")])
+    with available, mirror_list, cfg, search:
+        assert LibgenSource().search(_book("One Piece"), plan) == []
 
 
 def test_record_to_release_namespaces_source_id_and_fields():

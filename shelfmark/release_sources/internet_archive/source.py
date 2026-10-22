@@ -35,8 +35,8 @@ from shelfmark.release_sources import (
     browse_page,
     plan_query_candidates,
     register_source,
+    wanted_formats,
 )
-from shelfmark.release_sources.direct_download.common import get_supported_formats
 
 if TYPE_CHECKING:
     from shelfmark.core.search_plan import ReleaseSearchPlan
@@ -105,13 +105,6 @@ def _first_text(value: object) -> str | None:
         if text:
             return text
     return None
-
-
-def _wanted_formats(plan: ReleaseSearchPlan) -> list[str]:
-    """Return the formats to offer, in preference order: the browse filter, else settings."""
-    filters = getattr(plan, "source_filters", None)
-    chosen = getattr(filters, "format", None) or get_supported_formats()
-    return [fmt.strip().lower() for fmt in chosen if fmt and fmt.strip()]
 
 
 def _available_formats(doc: dict, wanted: list[str]) -> list[str]:
@@ -225,7 +218,7 @@ class InternetArchiveSource(ReleaseSource):
         )
 
         page = browse_page(plan)
-        wanted = _wanted_formats(plan)
+        wanted = wanted_formats(plan)
         answered = False
         last_error: Exception | None = None
         for text in plan_query_candidates(plan, book):

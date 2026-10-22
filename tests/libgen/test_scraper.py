@@ -1,6 +1,11 @@
 """Tests for the Libgen scraper: results parsing and download-link resolution."""
 
+import importlib.util
+import threading
 from unittest.mock import patch
+
+import pytest
+from urllib3.util.request import ACCEPT_ENCODING
 
 from shelfmark.release_sources.libgen import scraper
 from tests.libgen import sample_html as html
@@ -90,6 +95,12 @@ def test_parse_results_no_table_returns_none():
     assert scraper._parse_results(html.NO_TABLE_HTML, "https://libgen.li") is None
 
 
+def test_parse_results_no_matches_page_returns_empty_list():
+    # Before this, a no-match search counted as a failed mirror and its cooldown then
+    # refused every libgen search for two minutes.
+    assert scraper._parse_results(html.NO_MATCHES_HTML, "https://libgen.li") == []
+
+
 def test_parse_results_empty_table_returns_empty_list():
     result = scraper._parse_results(html.EMPTY_TABLE_HTML, "https://libgen.li")
     assert result == []
@@ -129,6 +140,17 @@ def test_fetch_page_sends_same_origin_referer():
     assert captured["headers"]["Referer"] == "https://libgen.li/"
 
 
+def test_fetch_page_asks_only_for_encodings_requests_can_decode():
+    # urllib3 decodes Brotli only with a Brotli package. Without it, Cloudflare-fronted
+    # mirrors (libgen.la, libgen.gl) answered "br" bodies that parsed as a dead mirror.
+    accept = scraper.downloader.DOWNLOAD_HEADERS["Accept-Encoding"]
+    assert accept == ACCEPT_ENCODING
+
+    has_brotli = bool(importlib.util.find_spec("brotli") or importlib.util.find_spec("brotlicffi"))
+    asks_for_br = "br" in [encoding.strip() for encoding in accept.split(",")]
+    assert asks_for_br == has_brotli
+
+
 def test_search_libgen_falls_through_dead_mirror():
     calls = []
 
@@ -144,9 +166,89 @@ def test_search_libgen_falls_through_dead_mirror():
     assert len(calls) == 2  # dead mirror tried first, then the live one
 
 
-def test_search_libgen_all_mirrors_dead_returns_empty():
-    with patch.object(scraper, "fetch_page", return_value=None):
+def test_search_libgen_all_mirrors_dead_raises():
+    with (
+        patch.object(scraper, "fetch_page", return_value=None),
+        pytest.raises(scraper.LibgenUnavailableError, match="https://a, https://b"),
+    ):
+        scraper.search_libgen("q", ["https://a", "https://b"], max_results=25)
+
+
+def test_search_libgen_empty_table_is_an_answer():
+    with patch.object(scraper, "fetch_page", return_value=html.EMPTY_TABLE_HTML) as fetch:
         assert scraper.search_libgen("q", ["https://a", "https://b"], max_results=25) == []
+    assert fetch.call_count == 1
+
+
+def test_search_libgen_no_match_keeps_the_mirror_healthy():
+    # A search with no match (or a page past the last) must not start the cooldown:
+    # it used to, and the next search then failed without asking any mirror.
+    with patch.object(scraper, "fetch_page", return_value=html.NO_MATCHES_HTML):
+        assert scraper.search_libgen("9780691151632", ["https://a"], max_results=25, page=2) == []
+    with patch.object(scraper, "fetch_page", return_value=html.SEARCH_HTML) as fetch:
+        assert len(scraper.search_libgen("laws of truth", ["https://a"], max_results=25)) == 4
+    assert fetch.call_count == 1
+
+
+def test_search_libgen_skips_a_mirror_that_failed_recently():
+    calls = []
+
+    def fake_fetch(url, timeout=(5, 15)):
+        calls.append(url)
+        return None if "dead" in url else html.SEARCH_HTML
+
+    mirrors = ["https://dead.example", "https://libgen.li"]
+    with patch.object(scraper, "fetch_page", side_effect=fake_fetch):
+        scraper.search_libgen("first", mirrors, max_results=25)
+        calls.clear()
+        scraper.search_libgen("second", mirrors, max_results=25)
+    assert [url.split("/index.php")[0] for url in calls] == ["https://libgen.li"]
+
+
+def test_search_libgen_fails_fast_when_every_mirror_is_cooling():
+    with patch.object(scraper, "fetch_page", return_value=None) as fetch:
+        with pytest.raises(scraper.LibgenUnavailableError):
+            scraper.search_libgen("q", ["https://a"], max_results=25)
+        with pytest.raises(scraper.LibgenUnavailableError, match="failed in the last"):
+            scraper.search_libgen("q", ["https://a"], max_results=25)
+    assert fetch.call_count == 1
+
+
+def test_search_libgen_retries_a_mirror_after_its_cooldown():
+    with patch.object(scraper, "fetch_page", return_value=None):
+        with pytest.raises(scraper.LibgenUnavailableError):
+            scraper.search_libgen("q", ["https://a"], max_results=25)
+    scraper._mirror_failed_at["https://a"] -= scraper._MIRROR_COOLDOWN_SECONDS
+    with patch.object(scraper, "fetch_page", return_value=html.SEARCH_HTML):
+        assert len(scraper.search_libgen("q", ["https://a"], max_results=25)) == 4
+
+
+def test_search_libgen_hung_mirror_does_not_block_the_next():
+    release = threading.Event()
+
+    def fake_fetch(url, timeout=(5, 15)):
+        if "hung" in url:
+            release.wait(5)
+            return None
+        return html.SEARCH_HTML
+
+    try:
+        with (
+            patch.object(scraper, "fetch_page", side_effect=fake_fetch),
+            patch.object(scraper, "_MIRROR_STAGGER_SECONDS", 0.05),
+        ):
+            records = scraper.search_libgen(
+                "q", ["https://hung.example", "https://libgen.li"], max_results=25
+            )
+    finally:
+        release.set()
+    assert len(records) == 4
+
+
+def test_search_libgen_does_not_ask_the_next_mirror_when_the_first_answers():
+    with patch.object(scraper, "fetch_page", return_value=html.SEARCH_HTML) as fetch:
+        scraper.search_libgen("q", ["https://a", "https://b"], max_results=25)
+    assert fetch.call_count == 1
 
 
 def test_search_libgen_asks_for_a_later_page():

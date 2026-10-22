@@ -8,7 +8,6 @@ A bare query rarely surfaces file links, so each search fans out into several
 requests (file-type operators and file-finding engines) and merges the results.
 """
 
-import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, ClassVar
 from urllib.parse import unquote, urlparse
@@ -17,6 +16,7 @@ import requests
 
 from shelfmark.core.config import config
 from shelfmark.core.logger import setup_logger
+from shelfmark.core.utils import fold_text, query_words
 from shelfmark.release_sources import (
     BrowseRecord,
     ColumnAlign,
@@ -50,6 +50,10 @@ _MIN_TITLE_LENGTH = 3
 # several operators makes the engines return nothing, so each one is its own request.
 _QUERY_OPERATORS = ("", "filetype:pdf", "ext:epub")
 _DEFAULT_FILE_ENGINES = "findfiles,wikicommons.files"
+
+# Seconds SearXNG waits for its engines (its `timeout_limit` parameter). Without it a
+# slow or rate-limited engine holds every request for the instance's full request_timeout.
+_ENGINE_TIME_LIMIT_SECONDS = "5"
 
 
 def _file_extensions() -> set[str]:
@@ -118,7 +122,7 @@ def _coerce_int(value: object, default: int) -> int:
 
 def _build_requests(queries: list[str], page: int = 1) -> list[dict[str, str]]:
     """Return the SearXNG request parameters for a search, in priority order."""
-    base: dict[str, str] = {"format": "json"}
+    base: dict[str, str] = {"format": "json", "timeout_limit": _ENGINE_TIME_LIMIT_SECONDS}
     if page > 1:
         base["pageno"] = str(page)
     categories = _split_csv(config.get("SEARXNG_CATEGORIES", "general"))
@@ -134,10 +138,13 @@ def _build_requests(queries: list[str], page: int = 1) -> list[dict[str, str]]:
     file_engines = _split_csv(config.get("SEARXNG_FILE_ENGINES", _DEFAULT_FILE_ENGINES))
 
     requests_params: list[dict[str, str]] = []
-    for query in queries:
-        for operator in _QUERY_OPERATORS:
-            q = f"{query} {operator}".strip()
-            requests_params.append({**base, "q": q})
+    for index, query in enumerate(queries):
+        # Only the first (most exact) query goes to the general engines. Each general
+        # request reaches every web engine, and more of them rate-limit the instance.
+        if index == 0:
+            for operator in _QUERY_OPERATORS:
+                q = f"{query} {operator}".strip()
+                requests_params.append({**base, "q": q})
         if file_engines:
             file_params = {key: value for key, value in base.items() if key != "categories"}
             file_params.update({"q": query, "engines": ",".join(file_engines)})
@@ -173,24 +180,11 @@ def _dedupe_key(url: str) -> str:
     return f"{host}{parsed.path}?{parsed.query}"
 
 
-def _fold(text: str) -> str:
-    """Return text in lower case with accents removed, for loose word matching."""
-    decomposed = unicodedata.normalize("NFKD", text.casefold())
-    return "".join(char for char in decomposed if not unicodedata.combining(char))
-
-
-def _query_words(queries: list[str]) -> set[str]:
-    """Return the folded words of the search queries that a match can contain."""
-    words = {word for query in queries for word in _fold(query).split()}
-    significant = {word for word in words if len(word) > 1}
-    return significant or words
-
-
 def _match_score(release: Release, words: set[str]) -> int:
     """Count the query words that appear in a release title or URL."""
     if not words:
         return 0
-    haystack = _fold(f"{release.title} {unquote(release.download_url or '')}")
+    haystack = fold_text(f"{release.title} {unquote(release.download_url or '')}")
     return sum(1 for word in words if word in haystack)
 
 
@@ -310,7 +304,7 @@ class SearXNGSource(ReleaseSource):
 
         # Engines rank by their own idea of relevance, and file engines match loosely.
         # Put the links that name more of the query first; the sort is stable.
-        words = _query_words(queries)
+        words = query_words(queries)
         releases.sort(key=lambda release: _match_score(release, words), reverse=True)
         releases = releases[:max_results]
 

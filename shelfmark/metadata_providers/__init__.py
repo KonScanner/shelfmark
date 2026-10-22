@@ -176,6 +176,59 @@ class MetadataSearchOptions:
     user_id: int | None = field(default=None, repr=False)
 
 
+class ReviewSort(StrEnum):
+    """Sort order for book reviews."""
+
+    POPULAR = "popular"  # Most liked first
+    NEWEST = "newest"  # Most recently reviewed first
+    OLDEST = "oldest"  # Least recently reviewed first
+    HIGHEST = "highest"  # Highest rating first
+    LOWEST = "lowest"  # Lowest rating first
+
+
+REVIEW_STAR_BUCKETS = (5, 4, 3, 2, 1)
+
+
+@dataclass
+class ReviewQuery:
+    """Sort, filter and page options for a book's reviews."""
+
+    sort: ReviewSort = ReviewSort.POPULAR
+    stars: int | None = None  # Only reviews in this star bucket (1-5)
+    hide_spoilers: bool = False
+    page: int = 1
+    limit: int = 10
+
+
+@dataclass
+class BookReview:
+    """One reader review of a book."""
+
+    id: str
+    text: str
+    rating: float | None = None  # 0.5-5 scale, None when the reviewer gave no rating
+    reviewed_at: str | None = None  # ISO date or timestamp
+    likes: int = 0
+    has_spoilers: bool = False
+    username: str | None = None
+    display_name: str | None = None
+    avatar_url: str | None = None
+    profile_url: str | None = None
+
+
+@dataclass
+class ReviewPage:
+    """One page of reviews plus counts for the filter controls."""
+
+    reviews: list[BookReview]
+    page: int
+    total: int  # Reviews that match the current filters
+    has_more: bool
+    review_count: int  # All reviews of the book
+    spoiler_count: int
+    star_counts: dict[str, int]  # Star bucket ("1"-"5") -> review count
+
+
 @dataclass
 class DisplayField:
     """A display field for metadata cards (ratings, page counts, etc.)."""
@@ -432,6 +485,11 @@ class MetadataProvider(ABC):
         Returns a dict with at least ``{"changed": bool}``.
         """
         msg = f"{self.display_name} does not support book targets"
+        raise NotImplementedError(msg)
+
+    def get_book_reviews(self, book_id: str, query: ReviewQuery) -> ReviewPage:
+        """Get one page of reader reviews for a book."""
+        msg = f"{self.display_name} does not support reviews"
         raise NotImplementedError(msg)
 
 

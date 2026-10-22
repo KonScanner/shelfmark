@@ -3191,12 +3191,12 @@ def api_metadata_book(provider: str, book_id: str) -> Response | tuple[Response,
         return jsonify({"error": str(e)}), 500
 
 
-def _handle_target_errors(
+def _handle_provider_errors(
     fallback_message: str,
 ) -> Callable[
     [Callable[..., Response | tuple[Response, int]]], Callable[..., Response | tuple[Response, int]]
 ]:
-    """Wrap a metadata-target route with standard error handling."""
+    """Wrap a metadata-provider route (targets, reviews) with standard error handling."""
 
     def decorator(
         fn: Callable[..., Response | tuple[Response, int]],
@@ -3220,7 +3220,7 @@ def _handle_target_errors(
 
 @app.route("/api/metadata/book/<provider>/<book_id>/targets", methods=["GET"])
 @login_required
-@_handle_target_errors("Failed to load book targets")
+@_handle_provider_errors("Failed to load book targets")
 def api_metadata_book_targets(provider: str, book_id: str) -> Response | tuple[Response, int]:
     """Get provider-managed list/status targets for a specific book."""
     prov = _resolve_metadata_provider(provider)
@@ -3231,7 +3231,7 @@ def api_metadata_book_targets(provider: str, book_id: str) -> Response | tuple[R
 
 @app.route("/api/metadata/book/<provider>/targets/batch", methods=["POST"])
 @login_required
-@_handle_target_errors("Failed to load book targets")
+@_handle_provider_errors("Failed to load book targets")
 def api_metadata_book_targets_batch(provider: str) -> Response | tuple[Response, int]:
     """Get provider-managed list/status targets for multiple books."""
     prov = _resolve_metadata_provider(provider)
@@ -3250,7 +3250,7 @@ def api_metadata_book_targets_batch(provider: str) -> Response | tuple[Response,
 
 @app.route("/api/metadata/book/<provider>/<book_id>/targets", methods=["PUT"])
 @login_required
-@_handle_target_errors("Failed to update book targets")
+@_handle_provider_errors("Failed to update book targets")
 def api_metadata_book_targets_update(
     provider: str, book_id: str
 ) -> Response | tuple[Response, int]:
@@ -3277,6 +3277,56 @@ def api_metadata_book_targets_update(
     if isinstance(deselected, str) and deselected:
         response["deselected_target"] = deselected
     return jsonify(response)
+
+
+@app.route("/api/metadata/book/<provider>/<book_id>/reviews", methods=["GET"])
+@login_required
+@_handle_provider_errors("Failed to load reviews")
+def api_metadata_book_reviews(provider: str, book_id: str) -> Response | tuple[Response, int]:
+    """Get one page of reader reviews for a book, with star and spoiler counts.
+
+    Query Parameters:
+        sort (str): popular (default), newest, oldest, highest or lowest
+        stars (int): Only reviews in this star bucket (1-5)
+        spoilers (str): "hide" to leave out reviews marked as spoilers
+        page (int): Page number (default: 1)
+        limit (int): Reviews per page (default: 10)
+    """
+    import hashlib
+    from dataclasses import asdict
+
+    from shelfmark.core.utils import transform_cover_url
+    from shelfmark.metadata_providers import REVIEW_STAR_BUCKETS, ReviewQuery, ReviewSort
+
+    try:
+        sort = ReviewSort(request.args.get("sort", ReviewSort.POPULAR.value))
+    except ValueError:
+        return jsonify({"error": "Invalid review sort"}), 400
+
+    stars_arg = request.args.get("stars", "").strip()
+    stars = coerce_int(stars_arg, 0) if stars_arg else None
+    if stars is not None and stars not in REVIEW_STAR_BUCKETS:
+        return jsonify({"error": "stars must be between 1 and 5"}), 400
+
+    query = ReviewQuery(
+        sort=sort,
+        stars=stars,
+        hide_spoilers=request.args.get("spoilers", "") == "hide",
+        page=max(coerce_int(request.args.get("page"), 1), 1),
+        limit=max(coerce_int(request.args.get("limit"), 10), 1),
+    )
+    prov = _resolve_metadata_provider(provider)
+    result = asdict(prov.get_book_reviews(book_id, query))
+
+    for review in result["reviews"]:
+        avatar_url = review.get("avatar_url")
+        if avatar_url:
+            # Key on the image URL: a new avatar gets a new entry, and no reviewer-chosen
+            # text ends up in the proxy path.
+            digest = hashlib.sha256(avatar_url.encode()).hexdigest()[:32]
+            review["avatar_url"] = transform_cover_url(avatar_url, f"{provider}_avatar_{digest}")
+
+    return jsonify(result)
 
 
 @app.route("/api/releases", methods=["GET"])
@@ -3631,6 +3681,44 @@ def api_release_source_record(source_name: str, record_id: str) -> Response | tu
     except _OPERATIONAL_ERRORS as e:
         logger.error_trace(f"Release source record error: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/annas-archive/activity", methods=["GET"])
+@login_required
+def api_annas_archive_activity() -> Response | tuple[Response, int]:
+    """Get Anna's Archive comments, reactions and file reports, grouped by file.
+
+    Query Parameters:
+        mode (str): "latest" (default) or "random"
+        refresh (str): "1" to skip the short cache on the latest view
+    """
+    from dataclasses import asdict
+
+    from shelfmark.release_sources.direct_download.activity import ACTIVITY_MODES, get_activity
+
+    mode = request.args.get("mode", "latest")
+    if mode not in ACTIVITY_MODES:
+        return jsonify({"error": "mode must be latest or random"}), 400
+
+    try:
+        groups = get_activity(
+            "random" if mode == "random" else "latest",
+            refresh=request.args.get("refresh") == "1",
+        )
+    except SourceUnavailableError as e:
+        return jsonify({"error": str(e)}), 503
+    except _OPERATIONAL_ERRORS as e:
+        logger.error_trace(f"Anna's Archive activity error: {e}")
+        return jsonify({"error": "Failed to load Anna's Archive activity"}), 500
+
+    from shelfmark.core.utils import transform_cover_url
+
+    payload = [asdict(group) for group in groups]
+    for group in payload:
+        if group["cover_url"]:
+            group["cover_url"] = transform_cover_url(group["cover_url"], f"annas_{group['md5']}")
+
+    return jsonify({"mode": mode, "groups": payload})
 
 
 @app.route("/api/settings", methods=["GET"])

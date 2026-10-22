@@ -24,6 +24,7 @@ import type {
   PackPlan,
 } from '../types';
 import { isMetadataBook } from '../types';
+import { bookSupportsReviews } from '../utils/bookReviews';
 import { bookSupportsTargets } from '../utils/bookTargetLoader';
 import { getColorStyleFromHint } from '../utils/colorMaps';
 import { groupFilesByFormat, type FormatGroup } from '../utils/formatReview';
@@ -61,6 +62,8 @@ import { FormatReviewPanel } from './FormatReviewPanel';
 import { LanguageMultiSelect } from './LanguageMultiSelect';
 import { PackReviewPanel } from './PackReviewPanel';
 import { ReleaseCell } from './ReleaseCell';
+import { ReviewsModal } from './ReviewsModal';
+import { StarRating } from './shared';
 
 // Combined mode configuration for the ReleaseModal
 interface CombinedModeConfig {
@@ -176,49 +179,11 @@ interface ReleaseModalProps {
   combinedMode?: CombinedModeConfig | null;
 }
 
-const STAR_POSITIONS = [0, 1, 2, 3, 4] as const;
-
 interface ReleaseModalSessionProps extends Omit<ReleaseModalProps, 'book' | 'onClose'> {
   book: Book;
   isClosing: boolean;
   animateEnter: boolean;
   onClose: () => void;
-}
-
-// 5-star rating display with partial fill support
-function StarRating({ rating, maxRating = 5 }: { rating: number; maxRating?: number }) {
-  // Normalize rating to 0-5 scale if needed
-  const normalizedRating = Math.min(Math.max(rating, 0), maxRating);
-
-  return (
-    <div className="flex items-center gap-0.5" title={`${rating} out of ${maxRating}`}>
-      {STAR_POSITIONS.map((starPosition) => {
-        const fillPercentage = Math.min(Math.max((normalizedRating - starPosition) * 100, 0), 100);
-
-        return (
-          <div key={starPosition} className="relative h-4 w-4">
-            {/* Empty star (gray background) */}
-            <svg
-              className="absolute inset-0 h-4 w-4 text-zinc-300 dark:text-zinc-600"
-              fill="currentColor"
-              viewBox="0 0 20 20"
-            >
-              <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-            </svg>
-            {/* Filled star (gold, clipped to fill percentage) */}
-            <svg
-              className="absolute inset-0 h-4 w-4 text-amber-400"
-              fill="currentColor"
-              viewBox="0 0 20 20"
-              style={{ clipPath: `inset(0 ${100 - fillPercentage}% 0 0)` }}
-            >
-              <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-            </svg>
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 // Thumbnail component for release rows
@@ -861,6 +826,9 @@ const ReleaseModalSession = ({
   // null means "Default" (best title match), undefined means "not set yet"
   const [sortBySource, setSortBySource] = useState<Record<string, SortState | null>>({});
   const [formatSortExpanded, setFormatSortExpanded] = useState(false);
+
+  // Reader reviews pop-up (opens over this modal)
+  const [reviewsOpen, setReviewsOpen] = useState(false);
 
   // Description expansion
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
@@ -1580,17 +1548,37 @@ const ReleaseModalSession = ({
                   {/* Metadata row */}
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-zinc-600 dark:text-zinc-400">
                     {book.year && <span>{book.year}</span>}
-                    {displayFields?.starField && (
-                      <span className="flex items-center gap-1.5">
-                        <StarRating rating={parseFloat(displayFields.starField.value || '0')} />
-                        <span>{displayFields.starField.value}</span>
-                        {displayFields.ratingsField && (
-                          <span className="text-zinc-400 dark:text-zinc-500">
-                            ({displayFields.ratingsField.value})
+                    {displayFields?.starField &&
+                      (bookSupportsReviews(book) ? (
+                        <button
+                          type="button"
+                          onClick={() => setReviewsOpen(true)}
+                          className="-mx-1.5 flex items-center gap-1.5 rounded-md px-1.5 py-0.5 transition-colors hover:bg-(--hover-surface) hover:text-(--text)"
+                          title="Show reviews"
+                          aria-haspopup="dialog"
+                        >
+                          <StarRating rating={parseFloat(displayFields.starField.value || '0')} />
+                          <span>{displayFields.starField.value}</span>
+                          {displayFields.ratingsField && (
+                            <span className="text-zinc-400 dark:text-zinc-500">
+                              ({displayFields.ratingsField.value})
+                            </span>
+                          )}
+                          <span className="text-xs text-sky-600 underline-offset-2 dark:text-sky-400">
+                            Reviews
                           </span>
-                        )}
-                      </span>
-                    )}
+                        </button>
+                      ) : (
+                        <span className="flex items-center gap-1.5">
+                          <StarRating rating={parseFloat(displayFields.starField.value || '0')} />
+                          <span>{displayFields.starField.value}</span>
+                          {displayFields.ratingsField && (
+                            <span className="text-zinc-400 dark:text-zinc-500">
+                              ({displayFields.ratingsField.value})
+                            </span>
+                          )}
+                        </span>
+                      ))}
                     {displayFields?.usersField && (
                       <span className="flex items-center gap-1">
                         <svg
@@ -2576,7 +2564,12 @@ const ReleaseModalSession = ({
     return modal;
   }
 
-  return createPortal(modal, document.body);
+  return (
+    <>
+      {createPortal(modal, document.body)}
+      {reviewsOpen && <ReviewsModal book={book} onClose={() => setReviewsOpen(false)} />}
+    </>
+  );
 };
 
 export const ReleaseModal = ({ book, onClose, ...rest }: ReleaseModalProps) => {

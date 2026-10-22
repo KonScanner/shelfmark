@@ -74,3 +74,95 @@ def test_cancel_before_body_closes_the_response(tmp_path):
         )
     response.__enter__.assert_not_called()
     assert list(tmp_path.iterdir()) == []
+
+
+def _redirect(location: str) -> MagicMock:
+    response = MagicMock()
+    response.is_redirect = True
+    response.headers = {"location": location}
+    return response
+
+
+def test_trusted_origin_skips_the_public_check_and_gets_its_login():
+    final = _response(b"x" * 4096)
+    trusted = {"http://calibre.lan:8083": ("reader", "secret")}
+    with (
+        patch(f"{_MODULE}.prepare_public_url", return_value=None) as public_check,
+        patch(f"{_MODULE}.requests.get", return_value=final) as get,
+    ):
+        response = public_file._open_public_stream("http://calibre.lan:8083/opds/1.epub", trusted)
+
+    assert response is final
+    public_check.assert_not_called()
+    assert get.call_args.kwargs["auth"] == ("reader", "secret")
+
+
+def test_redirect_away_from_a_trusted_origin_drops_the_login_and_is_checked():
+    trusted = {"http://calibre.lan:8083": ("reader", "secret")}
+    final = _response(b"x" * 4096)
+    with (
+        patch(f"{_MODULE}.prepare_public_url", side_effect=lambda url: url) as public_check,
+        patch(
+            f"{_MODULE}.requests.get",
+            side_effect=[_redirect("https://cdn.example.com/1.epub"), final],
+        ) as get,
+    ):
+        public_file._open_public_stream("http://calibre.lan:8083/opds/1.epub", trusted)
+
+    public_check.assert_called_once_with("https://cdn.example.com/1.epub")
+    assert get.call_args_list[1].kwargs["auth"] is None
+
+
+def test_an_untrusted_private_url_is_refused():
+    with patch(f"{_MODULE}.prepare_public_url", return_value=None):
+        assert public_file._open_public_stream("http://10.0.0.5/book.epub", {}) is None
+
+
+def test_url_origin_drops_credentials_and_path():
+    assert public_file.url_origin("HTTPS://user:pw@Host.Example:8443/a/b?c=1") == (
+        "https://host.example:8443"
+    )
+
+
+@pytest.mark.parametrize(
+    ("headers", "final_url", "url", "fallback", "expected"),
+    [
+        (
+            {"content-disposition": 'attachment; filename="Stivenson.215081.fb2.zip"'},
+            "https://static.flibusta.is/b.fb2/x",
+            "https://flibusta.is/b/215081/fb2",
+            "fb2",
+            ".zip",
+        ),
+        (
+            {"content-disposition": "attachment; filename*=UTF-8''%CE%9F%CE%B4.epub"},
+            "",
+            "https://x/get",
+            None,
+            ".epub",
+        ),
+        (
+            {},
+            "https://g.org/cache/epub/1727/pg1727-images-3.epub",
+            "https://g.org/1727.epub3.images",
+            "epub",
+            ".epub",
+        ),
+        ({}, "https://x/b/7/epub", "https://x/b/7/epub", "epub", ".epub"),
+        ({}, "", "https://x/download?id=1", None, ".bin"),
+        ({}, "", "https://x/download?id=1", "exe", ".bin"),
+    ],
+    ids=[
+        "disposition-zip",
+        "disposition-rfc2231",
+        "final-url",
+        "fallback",
+        "unknown",
+        "bad-fallback",
+    ],
+)
+def test_file_suffix_prefers_the_most_reliable_name(headers, final_url, url, fallback, expected):
+    response = MagicMock()
+    response.headers = headers
+    response.url = final_url
+    assert public_file._file_suffix(response, url, fallback) == expected

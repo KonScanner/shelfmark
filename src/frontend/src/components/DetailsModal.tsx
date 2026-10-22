@@ -6,9 +6,11 @@ import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useMountEffect } from '../hooks/useMountEffect';
 import type { Book, ButtonStateInfo } from '../types';
 import { isMetadataBook } from '../types';
+import { bookSupportsReviews } from '../utils/bookReviews';
 import { bookSupportsTargets } from '../utils/bookTargetLoader';
 import { isUserCancelledError } from '../utils/errors';
 import { BookTargetDropdown } from './BookTargetDropdown';
+import { ReviewsModal } from './ReviewsModal';
 import { LibraryBadge, isInLibrary } from './shared';
 
 interface DetailsModalProps {
@@ -49,8 +51,10 @@ export const DetailsModal = ({
 }: DetailsModalProps) => {
   const [isQueuing, setIsQueuing] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
+  const [reviewsOpen, setReviewsOpen] = useState(false);
 
   const handleClose = useCallback(() => {
+    setReviewsOpen(false);
     setIsClosing(true);
     setTimeout(() => {
       onClose();
@@ -257,6 +261,16 @@ export const DetailsModal = ({
                         </svg>
                         {ratingField.value}
                       </p>
+                      {bookSupportsReviews(book) && (
+                        <button
+                          type="button"
+                          onClick={() => setReviewsOpen(true)}
+                          className="text-xs font-medium text-sky-600 hover:underline dark:text-sky-400"
+                          aria-haspopup="dialog"
+                        >
+                          Read reviews
+                        </button>
+                      )}
                     </div>
                   )}
 
@@ -440,5 +454,10 @@ export const DetailsModal = ({
     return modal;
   }
 
-  return createPortal(modal, document.body);
+  return (
+    <>
+      {createPortal(modal, document.body)}
+      {reviewsOpen && <ReviewsModal book={book} onClose={() => setReviewsOpen(false)} />}
+    </>
+  );
 };

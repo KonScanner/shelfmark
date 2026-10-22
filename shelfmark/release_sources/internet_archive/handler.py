@@ -96,7 +96,12 @@ class InternetArchiveHandler(DownloadHandler):
 
         url = f"{DOWNLOAD_URL}/{quote(identifier, safe='')}/{quote(name)}"
         return download_public_file(
-            url, cancel_flag, progress_callback, status_callback, source_label="Internet Archive"
+            url,
+            cancel_flag,
+            progress_callback,
+            status_callback,
+            source_label="Internet Archive",
+            fallback_format=fmt,
         )
 
     def cancel(self, task_id: str) -> bool:

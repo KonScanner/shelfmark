@@ -210,6 +210,28 @@ class TestSearch:
         assert params[3]["engines"] == "findfiles,wikicommons.files"
         assert "categories" not in params[3]
 
+    def test_only_the_first_query_goes_to_the_general_engines(self):
+        with patch(
+            "shelfmark.release_sources.searxng.source.config", _config_map(self._enabled_config())
+        ):
+            params = _build_requests(["Dune Herbert", "Dune"])
+
+        assert [(p["q"], "categories" in p) for p in params] == [
+            ("Dune Herbert", True),
+            ("Dune Herbert filetype:pdf", True),
+            ("Dune Herbert ext:epub", True),
+            ("Dune Herbert", False),
+            ("Dune", False),
+        ]
+
+    def test_every_request_limits_the_engine_wait(self):
+        with patch(
+            "shelfmark.release_sources.searxng.source.config", _config_map(self._enabled_config())
+        ):
+            params = _build_requests(["Dune Herbert", "Dune"], page=2)
+
+        assert all(p["timeout_limit"] == "5" for p in params)
+
     def test_later_page_asks_every_request_for_that_page(self):
         with patch(
             "shelfmark.release_sources.searxng.source.config", _config_map(self._enabled_config())

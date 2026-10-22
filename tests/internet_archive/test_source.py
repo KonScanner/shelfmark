@@ -20,6 +20,7 @@ from shelfmark.release_sources.internet_archive.source import (
 )
 
 _SOURCE = "shelfmark.release_sources.internet_archive.source"
+_SUPPORTED_FORMATS = "shelfmark.release_sources.direct_download.common.get_supported_formats"
 _HANDLER = "shelfmark.release_sources.internet_archive.handler"
 _FORMATS = ["epub", "mobi", "azw3", "fb2", "djvu", "cbz", "cbr", "pdf"]
 
@@ -99,7 +100,7 @@ class TestSearch:
         ]
         with (
             patch(f"{_SOURCE}.config", _config({"INTERNET_ARCHIVE_ENABLED": True})),
-            patch(f"{_SOURCE}.get_supported_formats", return_value=_FORMATS),
+            patch(_SUPPORTED_FORMATS, return_value=_FORMATS),
             patch(f"{_SOURCE}.requests.get", return_value=_search_response(docs)) as fake_get,
         ):
             releases = InternetArchiveSource().search(_book(), _plan("Dune Frank Herbert"))
@@ -126,7 +127,7 @@ class TestSearch:
         plan = replace(_plan("x"), source_filters=SearchFilters(format=["pdf"]))
         with (
             patch(f"{_SOURCE}.config", _config({"INTERNET_ARCHIVE_ENABLED": True})),
-            patch(f"{_SOURCE}.get_supported_formats", return_value=_FORMATS),
+            patch(_SUPPORTED_FORMATS, return_value=_FORMATS),
             patch(f"{_SOURCE}.requests.get", return_value=_search_response(docs)),
         ):
             releases = InternetArchiveSource().search(_book(), plan)
@@ -149,7 +150,7 @@ class TestSearch:
         docs = [{"identifier": "x", "title": "X", "format": ["EPUB", "Text PDF"]}]
         with (
             patch(f"{_SOURCE}.config", _config({"INTERNET_ARCHIVE_ENABLED": True})),
-            patch(f"{_SOURCE}.get_supported_formats", return_value=["pdf"]),
+            patch(_SUPPORTED_FORMATS, return_value=["pdf"]),
             patch(f"{_SOURCE}.requests.get", return_value=_search_response(docs)),
         ):
             releases = InternetArchiveSource().search(_book(), _plan("x"))

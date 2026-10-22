@@ -11,7 +11,7 @@ def test_update_settings_mirrors_applies_aa_changes_live(monkeypatch):
     monkeypatch.setattr(
         "shelfmark.core.settings_registry.save_config_file", lambda _tab, _values: True
     )
-    monkeypatch.setattr(config_obj, "refresh", lambda: None)
+    monkeypatch.setattr(config_obj, "refresh", lambda **_kw: None)
 
     called: dict[str, object] = {}
 
@@ -37,7 +37,7 @@ def test_update_settings_mirrors_logs_live_apply_failure(monkeypatch):
     monkeypatch.setattr(
         "shelfmark.core.settings_registry.save_config_file", lambda _tab, _values: True
     )
-    monkeypatch.setattr(config_obj, "refresh", lambda: None)
+    monkeypatch.setattr(config_obj, "refresh", lambda **_kw: None)
 
     import shelfmark.download.network as network
 
@@ -63,3 +63,21 @@ def test_update_settings_mirrors_logs_live_apply_failure(monkeypatch):
     assert len(args) == 1
     assert isinstance(args[0], RuntimeError)
     assert str(args[0]) == "mirror apply failed"
+
+
+def test_update_settings_forces_the_config_refresh(monkeypatch):
+    # A refresh earlier in the same request must not swallow the one after the write.
+    import shelfmark.config.settings  # noqa: F401
+    from shelfmark.core.config import config as config_obj
+    from shelfmark.core.settings_registry import update_settings
+
+    monkeypatch.setattr(
+        "shelfmark.core.settings_registry.save_config_file", lambda _tab, _values: True
+    )
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(config_obj, "refresh", lambda **kwargs: calls.append(kwargs))
+
+    result = update_settings("general", {"SEARCH_PAGE_TITLE": "Books"})
+
+    assert result["success"] is True
+    assert calls == [{"force": True}]

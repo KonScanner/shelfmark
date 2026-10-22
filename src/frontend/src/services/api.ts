@@ -1,5 +1,7 @@
 import type {
   Book,
+  BookReviewPage,
+  ReviewQuery,
   StatusData,
   AppConfig,
   LoginCredentials,
@@ -22,7 +24,9 @@ import type {
   SettingsTab,
   UpdateResult,
 } from '../types/settings';
+import type { ActivityMode, ActivityResponse } from '../utils/annasActivity';
 import { getApiBase, withBasePath } from '../utils/basePath';
+import { buildReviewSearchParams } from '../utils/bookReviews';
 import type { MetadataBookData, SourceRecordData } from '../utils/bookTransformers';
 import {
   transformMetadataToBook,
@@ -534,11 +538,30 @@ export const setBookTargetState = async (
   };
 };
 
-export const getSourceRecordInfo = async (source: string, id: string): Promise<Book> => {
+export const getSourceRecordInfo = async (
+  source: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<Book> => {
   const response = await fetchJSON<SourceRecordData>(
     `${API_BASE}/release-sources/${encodeURIComponent(source)}/records/${encodeURIComponent(id)}`,
+    { signal },
   );
   return transformSourceRecordToBook(response);
+};
+
+// Anna's Archive comments, reactions and file reports, grouped by file
+export const getAnnasArchiveActivity = async (
+  mode: ActivityMode,
+  options: { refresh?: boolean; signal?: AbortSignal } = {},
+): Promise<ActivityResponse> => {
+  const params = new URLSearchParams({ mode });
+  if (options.refresh) {
+    params.set('refresh', '1');
+  }
+  return fetchJSON<ActivityResponse>(`${API_BASE}/annas-archive/activity?${params.toString()}`, {
+    signal: options.signal,
+  });
 };
 
 // Get full book details from a metadata provider
@@ -550,7 +573,18 @@ export const getMetadataBookInfo = async (provider: string, bookId: string): Pro
   return transformMetadataToBook(response);
 };
 
-// Download a specific release (from ReleaseModal)
+// Get one page of reader reviews for a metadata book
+export const getMetadataBookReviews = async (
+  provider: string,
+  bookId: string,
+  query: ReviewQuery,
+  signal?: AbortSignal,
+): Promise<BookReviewPage> =>
+  fetchJSON<BookReviewPage>(
+    `${API_BASE}/metadata/book/${encodeURIComponent(provider)}/${encodeURIComponent(bookId)}/reviews?${buildReviewSearchParams(query).toString()}`,
+    { signal },
+  );
+
 export type DownloadReleasePayload = {
   source: string;
   source_id: string;

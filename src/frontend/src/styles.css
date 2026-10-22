@@ -601,17 +601,14 @@
        MOBILE: Full viewport width, no fixed widths
        ============================================ */
   @media (max-width: 639px) {
-    /* Break search section out to full viewport width, escaping the centered main container */
+    /* Break search section out of main's px-4 padding to the full page width. Cancel the
+       padding instead of using 100vw: 100vw includes the space html's scrollbar-gutter
+       keeps, so it overflowed the page sideways by half the gutter. */
     #search-section {
-      position: relative;
-      left: 50%;
-      right: 50%;
-      margin-left: -50vw;
-      margin-right: -50vw;
-      width: 100vw;
+      margin-left: -1rem;
+      margin-right: -1rem;
       padding-left: 1rem;
       padding-right: 1rem;
-      box-sizing: border-box;
     }
 
     /* Remove any width constraints on search wrapper */

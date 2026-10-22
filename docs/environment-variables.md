@@ -21,7 +21,12 @@ This document lists all configuration options that can be set via environment va
 - [Soulseek (slskd)](#soulseek-slskd)
 - [AudiobookBay](#audiobookbay)
 - [Libgen Search](#libgen-search)
+- [SearXNG](#searxng)
+- [Internet Archive](#internet-archive)
 - [Webshare.cz](#websharecz)
+- [OPDS Catalogs](#opds-catalogs)
+- [Z-Library Search](#z-library-search)
+- [Project Ben-Yehuda](#project-ben-yehuda)
 - [IRC](#irc)
 - [Download Clients](#download-clients)
 - [Metadata Providers](#metadata-providers)
@@ -56,7 +61,7 @@ These environment variables are used at startup before the settings system loads
 | `HIDE_LOCAL_AUTH` | Hide the username/password login form when OIDC is active. | boolean | `false` |
 | `DISABLE_LOCAL_AUTH` | Disable username/password login and remove the local-admin prerequisite for OIDC. Implies HIDE_LOCAL_AUTH; with AUTH_METHOD=builtin, everyone is locked out until auth env vars are changed. | boolean | `false` |
 | `SHELFMARK_API_KEY` | Optional static API key. When set, requests carrying it as 'Authorization: Bearer <key>' (or X-Api-Key) are authenticated as an admin; browser sessions keep working. Unset = off. | string | `unset` |
-| `SHELFMARK_API_KEY_READONLY` | Optional second API key for dashboards and monitors. Send it like SHELFMARK_API_KEY. It can only GET /api/stats (counters only, no titles or user names). Every other request, and any write, is refused with 403, and it never gets a session. Unset = off. | string | `unset` |
+| `SHELFMARK_API_KEY_READONLY` | Optional second API key for dashboards and monitors. Send it like `SHELFMARK_API_KEY`. It can only `GET /api/stats` (counters only, no titles or user names). Every other request, and any write, is refused with 403, and it never gets a session. Unset = off. | string | `unset` |
 | `OIDC_AUTO_REDIRECT` | Automatically redirect to the OIDC provider instead of showing the login page. | boolean | `false` |
 | `UMASK` | File creation mask for the app process, read by entrypoint.sh. The default 0022 gives files 644 and directories 755. | string (octal) | `0022` |
 | `DOCKERMODE` | Indicates the application is running inside a Docker container. | boolean | `false` |
@@ -151,7 +156,7 @@ Optional static API key. When set, requests carrying it as 'Authorization: Beare
 
 #### `SHELFMARK_API_KEY_READONLY`
 
-Optional second API key for dashboards and monitors. Send it like SHELFMARK_API_KEY. It can only GET /api/stats (counters only, no titles or user names). Every other request, and any write, is refused with 403, and it never gets a session. Unset = off.
+Optional second API key for dashboards and monitors. Send it like `SHELFMARK_API_KEY`. It can only `GET /api/stats` (counters only, no titles or user names). Every other request, and any write, is refused with 403, and it never gets a session. Unset = off.
 
 - **Type:** string
 - **Default:** `unset`
@@ -421,7 +426,10 @@ Audiobook formats to include in search results. ZIP/RAR archives are extracted a
 | `SEARCH_MODE` | How you want to search for and download books. | string (choice) | `universal` |
 | `BOOK_LANGUAGE` | Default language filter for searches. Users can override this for their own account. | string (comma-separated) | `en` |
 | `DEFAULT_CONTENT_TYPE` | Which tab the search page opens on. Users can override this for their own account, and a browser that has already picked a tab keeps its choice. | string (choice) | `ebook` |
-| `AA_DEFAULT_SORT` | Default sort order for search results. | string (choice) | _empty string_ |
+| `AA_DEFAULT_SORT` | Default sort order for file results (Direct mode, and the Files tab in Universal mode). Preferred languages puts the Language Sort Order first; Most downloads is the previous default. | string (choice) | `language` |
+| `LANGUAGE_SORT_ORDER` | Comma-separated language codes for the Preferred languages sort, first language first. Results in other languages, or with no known language, come after them. | string | `en, el, de, ru, he, fr, es` |
+| `FILES_PAGES_PER_SEARCH` | Result pages each file source loads when a search starts. More pages give a better first sort, but add load on the sources and the risk of rate limits. Further pages load while you scroll. | number | `2` |
+| `FILES_SEARCH_TIMING` | When Universal mode searches the file sources for the Files tab. | string (choice) | `with_books` |
 | `SHOW_RELEASE_SOURCE_LINKS` | Show clickable release-source links in release and details modals. Metadata provider links stay enabled. | boolean | `true` |
 | `SHOW_COMBINED_SELECTOR` | Show the option to search for and download both a book and audiobook together. | boolean | `true` |
 | `FORCE_COMBINED_SEARCH` | Force combined search whenever it's available. Locks the combined toggle on. | boolean | `false` |
@@ -468,13 +476,42 @@ Which tab the search page opens on. Users can override this for their own accoun
 
 #### `AA_DEFAULT_SORT`
 
-**Default Sort Order**
+**Default File Sort Order**
 
-Default sort order for search results.
+Default sort order for file results (Direct mode, and the Files tab in Universal mode). Preferred languages puts the Language Sort Order first; Most downloads is the previous default.
 
 - **Type:** string (choice)
-- **Default:** _empty string_
-- **Options:** `""` (Most downloads), `relevance` (Most relevant), `newest` (Newest (publication year)), `oldest` (Oldest (publication year)), `largest` (Largest (filesize)), `smallest` (Smallest (filesize)), `newest_added` (Newest (open sourced)), `oldest_added` (Oldest (open sourced))
+- **Default:** `language`
+- **Options:** `language` (Preferred languages), `""` (Most downloads), `relevance` (Most relevant), `newest` (Newest (publication year)), `oldest` (Oldest (publication year)), `largest` (Largest (filesize)), `smallest` (Smallest (filesize))
+
+#### `LANGUAGE_SORT_ORDER`
+
+**Language Sort Order**
+
+Comma-separated language codes for the Preferred languages sort, first language first. Results in other languages, or with no known language, come after them.
+
+- **Type:** string
+- **Default:** `en, el, de, ru, he, fr, es`
+
+#### `FILES_PAGES_PER_SEARCH`
+
+**Pages to Load per Search**
+
+Result pages each file source loads when a search starts. More pages give a better first sort, but add load on the sources and the risk of rate limits. Further pages load while you scroll.
+
+- **Type:** number
+- **Default:** `2`
+- **Constraints:** min: 1, max: 5
+
+#### `FILES_SEARCH_TIMING`
+
+**Files Tab Search**
+
+When Universal mode searches the file sources for the Files tab.
+
+- **Type:** string (choice)
+- **Default:** `with_books`
+- **Options:** `with_books` (With every search), `on_open` (When the Files tab opens)
 
 #### `SHOW_RELEASE_SOURCE_LINKS`
 
@@ -511,7 +548,6 @@ Choose which metadata provider to use for book searches.
 
 - **Type:** string (choice)
 - **Default:** `openlibrary`
-- **Options:** `""` (No providers enabled)
 
 #### `METADATA_PROVIDER_AUDIOBOOK`
 
@@ -521,7 +557,6 @@ Metadata provider for audiobook searches. Uses the book provider if not set.
 
 - **Type:** string (choice)
 - **Default:** _empty string_
-- **Options:** `""` (Use book provider), `""` (No providers enabled)
 
 #### `METADATA_PROVIDER_COMBINED`
 
@@ -531,7 +566,6 @@ Metadata provider for combined mode searches. Uses the book provider if not set.
 
 - **Type:** string (choice)
 - **Default:** _empty string_
-- **Options:** `""` (Use book provider), `""` (No providers enabled)
 
 #### `DEFAULT_RELEASE_SOURCE`
 
@@ -541,7 +575,6 @@ The release source tab to open by default in the release modal for books. Leave 
 
 - **Type:** string (choice)
 - **Default:** _empty string_
-- **Options:** `""` (Use first available source)
 
 #### `DEFAULT_RELEASE_SOURCE_AUDIOBOOK`
 
@@ -551,7 +584,6 @@ The release source tab to open by default in the release modal for audiobooks. U
 
 - **Type:** string (choice)
 - **Default:** _empty string_
-- **Options:** `""` (Use book release source)
 
 #### `SHOW_SERIES_COLUMN`
 
@@ -2132,6 +2164,140 @@ Maximum number of results to request per search (1-100).
 
 </details>
 
+## SearXNG
+
+| Variable | Description | Type | Default |
+|----------|-------------|------|---------|
+| `SEARXNG_ENABLED` | Include SearXNG in release-source lists | boolean | `false` |
+| `SEARXNG_BASE_URL` | SearXNG instance URL as seen from the Shelfmark container. A server on the Docker host is host.docker.internal, not localhost. JSON output must be enabled on the instance. | string | _none_ |
+| `SEARXNG_CATEGORIES` | Comma-separated SearXNG categories to search, e.g. general, files | string | `general` |
+| `SEARXNG_ENGINES` | Comma-separated engine names. Leave empty to use all enabled engines. | string | _empty string_ |
+| `SEARXNG_FILE_ENGINES` | Comma-separated engines that find files directly. Each search also runs through these engines, even when they are off on the instance. Leave empty to skip this pass. | string | `findfiles,wikicommons.files` |
+| `SEARXNG_LANGUAGE` | SearXNG language code, e.g. el or en. Leave empty to search all languages. | string | _empty string_ |
+| `SEARXNG_MAX_RESULTS` | Maximum number of file-link results to keep per search | number | `50` |
+| `SEARXNG_TIMEOUT` | Seconds to wait for the SearXNG API to answer | number | `20` |
+
+<details>
+<summary>Detailed descriptions</summary>
+
+#### `SEARXNG_ENABLED`
+
+**Enable SearXNG source**
+
+Include SearXNG in release-source lists
+
+- **Type:** boolean
+- **Default:** `false`
+
+#### `SEARXNG_BASE_URL`
+
+**Base URL**
+
+SearXNG instance URL as seen from the Shelfmark container. A server on the Docker host is host.docker.internal, not localhost. JSON output must be enabled on the instance.
+
+- **Type:** string
+- **Default:** _none_
+
+#### `SEARXNG_CATEGORIES`
+
+**Categories**
+
+Comma-separated SearXNG categories to search, e.g. general, files
+
+- **Type:** string
+- **Default:** `general`
+
+#### `SEARXNG_ENGINES`
+
+**Engines**
+
+Comma-separated engine names. Leave empty to use all enabled engines.
+
+- **Type:** string
+- **Default:** _empty string_
+
+#### `SEARXNG_FILE_ENGINES`
+
+**File Engines**
+
+Comma-separated engines that find files directly. Each search also runs through these engines, even when they are off on the instance. Leave empty to skip this pass.
+
+- **Type:** string
+- **Default:** `findfiles,wikicommons.files`
+
+#### `SEARXNG_LANGUAGE`
+
+**Language**
+
+SearXNG language code, e.g. el or en. Leave empty to search all languages.
+
+- **Type:** string
+- **Default:** _empty string_
+
+#### `SEARXNG_MAX_RESULTS`
+
+**Max Results**
+
+Maximum number of file-link results to keep per search
+
+- **Type:** number
+- **Default:** `50`
+- **Constraints:** min: 5, max: 100
+
+#### `SEARXNG_TIMEOUT`
+
+**Request Timeout (seconds)**
+
+Seconds to wait for the SearXNG API to answer
+
+- **Type:** number
+- **Default:** `20`
+- **Constraints:** min: 5, max: 120
+
+</details>
+
+## Internet Archive
+
+| Variable | Description | Type | Default |
+|----------|-------------|------|---------|
+| `INTERNET_ARCHIVE_ENABLED` | Include Internet Archive in release-source lists and direct search | boolean | `false` |
+| `INTERNET_ARCHIVE_MAX_RESULTS` | Maximum number of archive.org items to keep per search | number | `50` |
+| `INTERNET_ARCHIVE_TIMEOUT` | Seconds to wait for the archive.org search API to answer | number | `20` |
+
+<details>
+<summary>Detailed descriptions</summary>
+
+#### `INTERNET_ARCHIVE_ENABLED`
+
+**Enable Internet Archive source**
+
+Include Internet Archive in release-source lists and direct search
+
+- **Type:** boolean
+- **Default:** `false`
+
+#### `INTERNET_ARCHIVE_MAX_RESULTS`
+
+**Max Results**
+
+Maximum number of archive.org items to keep per search
+
+- **Type:** number
+- **Default:** `50`
+- **Constraints:** min: 5, max: 200
+
+#### `INTERNET_ARCHIVE_TIMEOUT`
+
+**Request Timeout (seconds)**
+
+Seconds to wait for the archive.org search API to answer
+
+- **Type:** number
+- **Default:** `20`
+- **Constraints:** min: 5, max: 120
+
+</details>
+
 ## Webshare.cz
 
 | Variable | Description | Type | Default |
@@ -2182,6 +2348,192 @@ Maximum number of files to request per search (1-200). Results are then filtered
 - **Type:** number
 - **Default:** `50`
 - **Constraints:** min: 1, max: 200
+
+</details>
+
+## OPDS Catalogs
+
+| Variable | Description | Type | Default |
+|----------|-------------|------|---------|
+| `OPDS_ENABLED` | Include OPDS catalogues in release-source lists and direct search | boolean | `false` |
+| `OPDS_FEEDS` | OPDS search URLs ({searchTerms} marks the query) or catalogue root URLs, searched at the same time | string (comma-separated) | `https://www.gutenberg.org/ebooks/search.opds/?query={searchTerms}` |
+| `OPDS_MAX_RESULTS` | Maximum number of books to keep from each catalogue per search | number | `25` |
+| `OPDS_TIMEOUT` | Seconds to wait for each catalogue request | number | `20` |
+
+<details>
+<summary>Detailed descriptions</summary>
+
+#### `OPDS_ENABLED`
+
+**Enable OPDS source**
+
+Include OPDS catalogues in release-source lists and direct search
+
+- **Type:** boolean
+- **Default:** `false`
+
+#### `OPDS_FEEDS`
+
+**Catalogs**
+
+OPDS search URLs ({searchTerms} marks the query) or catalogue root URLs, searched at the same time
+
+- **Type:** string (comma-separated)
+- **Default:** `https://www.gutenberg.org/ebooks/search.opds/?query={searchTerms}`
+
+#### `OPDS_MAX_RESULTS`
+
+**Max Results per Catalog**
+
+Maximum number of books to keep from each catalogue per search
+
+- **Type:** number
+- **Default:** `25`
+- **Constraints:** min: 5, max: 100
+
+#### `OPDS_TIMEOUT`
+
+**Request Timeout (seconds)**
+
+Seconds to wait for each catalogue request
+
+- **Type:** number
+- **Default:** `20`
+- **Constraints:** min: 5, max: 120
+
+</details>
+
+## Z-Library Search
+
+| Variable | Description | Type | Default |
+|----------|-------------|------|---------|
+| `ZLIBRARY_SEARCH_ENABLED` | Include Z-Library in release-source lists and direct search | boolean | `false` |
+| `ZLIBRARY_EMAIL` | Z-Library account email, used only to download | string | _none_ |
+| `ZLIBRARY_PASSWORD` | Z-Library account password | string (secret) | _none_ |
+| `ZLIBRARY_REMIX_USERID` | Instead of email and password: the remix_userid cookie of a logged-in Z-Library session | string | _none_ |
+| `ZLIBRARY_REMIX_USERKEY` | The remix_userkey cookie that goes with remix_userid | string (secret) | _none_ |
+| `ZLIBRARY_MAX_RESULTS` | Maximum number of books to ask for per search page | number | `50` |
+| `ZLIBRARY_TIMEOUT` | Seconds to wait for each Z-Library API request | number | `20` |
+
+<details>
+<summary>Detailed descriptions</summary>
+
+#### `ZLIBRARY_SEARCH_ENABLED`
+
+**Enable Z-Library source**
+
+Include Z-Library in release-source lists and direct search
+
+- **Type:** boolean
+- **Default:** `false`
+
+#### `ZLIBRARY_EMAIL`
+
+**Account Email**
+
+Z-Library account email, used only to download
+
+- **Type:** string
+- **Default:** _none_
+
+#### `ZLIBRARY_PASSWORD`
+
+**Account Password**
+
+Z-Library account password
+
+- **Type:** string (secret)
+- **Default:** _none_
+
+#### `ZLIBRARY_REMIX_USERID`
+
+**remix_userid**
+
+Instead of email and password: the remix_userid cookie of a logged-in Z-Library session
+
+- **Type:** string
+- **Default:** _none_
+
+#### `ZLIBRARY_REMIX_USERKEY`
+
+**remix_userkey**
+
+The remix_userkey cookie that goes with remix_userid
+
+- **Type:** string (secret)
+- **Default:** _none_
+
+#### `ZLIBRARY_MAX_RESULTS`
+
+**Max Results**
+
+Maximum number of books to ask for per search page
+
+- **Type:** number
+- **Default:** `50`
+- **Constraints:** min: 10, max: 100
+
+#### `ZLIBRARY_TIMEOUT`
+
+**Request Timeout (seconds)**
+
+Seconds to wait for each Z-Library API request
+
+- **Type:** number
+- **Default:** `20`
+- **Constraints:** min: 5, max: 120
+
+</details>
+
+## Project Ben-Yehuda
+
+| Variable | Description | Type | Default |
+|----------|-------------|------|---------|
+| `BENYEHUDA_ENABLED` | Include Project Ben-Yehuda in release-source lists and direct search | boolean | `false` |
+| `BENYEHUDA_API_KEY` | Your Project Ben-Yehuda API key | string (secret) | _none_ |
+| `BENYEHUDA_FILE_FORMAT` | The format to download texts in | string (choice) | `epub` |
+| `BENYEHUDA_TIMEOUT` | Seconds to wait for each API request | number | `20` |
+
+<details>
+<summary>Detailed descriptions</summary>
+
+#### `BENYEHUDA_ENABLED`
+
+**Enable Project Ben-Yehuda source**
+
+Include Project Ben-Yehuda in release-source lists and direct search
+
+- **Type:** boolean
+- **Default:** `false`
+
+#### `BENYEHUDA_API_KEY`
+
+**API Key**
+
+Your Project Ben-Yehuda API key
+
+- **Type:** string (secret)
+- **Default:** _none_
+
+#### `BENYEHUDA_FILE_FORMAT`
+
+**File Format**
+
+The format to download texts in
+
+- **Type:** string (choice)
+- **Default:** `epub`
+- **Options:** `epub` (EPUB), `pdf` (PDF), `docx` (DOCX), `odt` (ODT), `txt` (TXT), `html` (HTML)
+
+#### `BENYEHUDA_TIMEOUT`
+
+**Request Timeout (seconds)**
+
+Seconds to wait for each API request
+
+- **Type:** number
+- **Default:** `20`
+- **Constraints:** min: 5, max: 120
 
 </details>
 
@@ -3415,7 +3767,6 @@ Select Auto to try mirrors from your list on startup and fail over on errors. Ch
 
 - **Type:** string (choice)
 - **Default:** `auto`
-- **Options:** `auto` (Auto (Recommended))
 
 #### `AA_MIRROR_URLS`
 

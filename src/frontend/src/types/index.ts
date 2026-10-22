@@ -13,7 +13,39 @@ export interface DisplayField {
   icon?: string; // Icon name: "star", "book", "users", "editions"
 }
 
-// Book data types
+// Reader reviews from a metadata provider (e.g. Hardcover)
+export type ReviewSort = 'popular' | 'newest' | 'oldest' | 'highest' | 'lowest';
+
+export interface ReviewQuery {
+  sort: ReviewSort;
+  stars: number | null; // Only reviews in this star bucket (1-5)
+  hideSpoilers: boolean;
+  page: number;
+}
+
+export interface BookReview {
+  id: string;
+  text: string;
+  rating: number | null; // 0.5-5, null when the reviewer gave no rating
+  reviewed_at: string | null;
+  likes: number;
+  has_spoilers: boolean;
+  username: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  profile_url: string | null;
+}
+
+export interface BookReviewPage {
+  reviews: BookReview[];
+  page: number;
+  total: number; // Reviews that match the current filters
+  has_more: boolean;
+  review_count: number; // All reviews of the book
+  spoiler_count: number;
+  star_counts: Record<string, number>; // Star bucket ("1"-"5") -> review count
+}
+
 export interface Book {
   id: string;
   request_id?: number;
