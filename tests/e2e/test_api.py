@@ -90,6 +90,7 @@ class TestReleaseSourcesEndpoint:
                 "enabled",
                 "supported_content_types",
                 "browse_results_are_releases",
+                "supports_browse_paging",
                 "can_be_default",
             }
             assert isinstance(source["name"], str)
@@ -97,6 +98,7 @@ class TestReleaseSourcesEndpoint:
             assert isinstance(source["enabled"], bool)
             assert isinstance(source["supported_content_types"], list)
             assert isinstance(source["browse_results_are_releases"], bool)
+            assert isinstance(source["supports_browse_paging"], bool)
             assert isinstance(source["can_be_default"], bool)
 
 

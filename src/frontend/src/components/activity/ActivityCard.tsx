@@ -506,7 +506,7 @@ export const ActivityCard = ({
   const model = useMemo(() => buildActivityCardModel(item, isAdmin), [item, isAdmin]);
   const noteLine = model.noteLine;
   const badgeRefs = useRef<Record<string, HTMLSpanElement | null>>({});
-  const titleLineRef = useRef<HTMLParagraphElement | null>(null);
+  const titleLineRef = useRef<HTMLDivElement | null>(null);
   const [badgeOverflow, setBadgeOverflow] = useState<Record<string, boolean>>({});
   const [titleOverflow, setTitleOverflow] = useState(false);
 
@@ -750,10 +750,10 @@ export const ActivityCard = ({
                 triggerClassName="block max-w-full"
                 alwaysWrap
               >
-                <p ref={titleLineRef} className={titleLineClassName}>
+                <div ref={titleLineRef} className={titleLineClassName}>
                   <span className="font-semibold">{titleNode}</span>
                   {item.author && <span className="text-xs opacity-60"> — {item.author}</span>}
-                </p>
+                </div>
               </Tooltip>
             </div>
             <div className="-my-1 inline-flex shrink-0 items-center gap-1">

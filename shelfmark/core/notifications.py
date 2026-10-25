@@ -7,6 +7,7 @@ import logging
 import re
 import socket
 import sqlite3
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar

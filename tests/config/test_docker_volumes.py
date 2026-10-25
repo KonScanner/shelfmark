@@ -116,7 +116,7 @@ def test_covers_cache_writability_probe_is_reused(tmp_path: Path):
     first_dir.mkdir()
     second_dir = tmp_path / "second"
     second_dir.mkdir()
-    env._writable_probe_cache.clear()
+    env.reset_config_dir_writable_cache()
 
     with (
         pytest.MonkeyPatch.context() as monkeypatch,
@@ -124,17 +124,17 @@ def test_covers_cache_writability_probe_is_reused(tmp_path: Path):
     ):
         monkeypatch.setattr("shelfmark.config.env.CONFIG_DIR", first_dir)
         for _ in range(50):
-            assert env._is_config_dir_writable_cached() is True
+            assert env._config_dir_writable_cached() is True
         assert probe.call_count == 1
 
         monkeypatch.setattr("shelfmark.config.env.CONFIG_DIR", second_dir)
-        assert env._is_config_dir_writable_cached() is True
+        assert env._config_dir_writable_cached() is True
         assert probe.call_count == 2
 
         monkeypatch.setattr(env, "_WRITABLE_PROBE_TTL_SECONDS", 0.0)
-        env._writable_probe_cache.clear()
-        env._is_config_dir_writable_cached()
-        env._is_config_dir_writable_cached()
+        env.reset_config_dir_writable_cache()
+        env._config_dir_writable_cached()
+        env._config_dir_writable_cached()
         assert probe.call_count == 4
 
-    env._writable_probe_cache.clear()
+    env.reset_config_dir_writable_cache()

@@ -122,23 +122,22 @@ def _is_config_dir_writable() -> bool:
 # The probe above creates and deletes a file, and cover URLs are rewritten per result,
 # per queue task and per history row, so it is remembered for a short time.
 _WRITABLE_PROBE_TTL_SECONDS = 60.0
-_writable_probe: tuple[float, bool] | None = None
+_writable_probe_cache: dict[Path, tuple[float, bool]] = {}
 
 
 def _config_dir_writable_cached() -> bool:
-    global _writable_probe
     now = time.monotonic()
-    if _writable_probe is not None and now - _writable_probe[0] < _WRITABLE_PROBE_TTL_SECONDS:
-        return _writable_probe[1]
+    cached = _writable_probe_cache.get(CONFIG_DIR)
+    if cached is not None and now - cached[0] < _WRITABLE_PROBE_TTL_SECONDS:
+        return cached[1]
     writable = _is_config_dir_writable()
-    _writable_probe = (now, writable)
+    _writable_probe_cache[CONFIG_DIR] = (now, writable)
     return writable
 
 
 def reset_config_dir_writable_cache() -> None:
     """Forget the remembered probe (tests change the directory under it)."""
-    global _writable_probe
-    _writable_probe = None
+    _writable_probe_cache.clear()
 
 
 def is_covers_cache_enabled() -> bool:

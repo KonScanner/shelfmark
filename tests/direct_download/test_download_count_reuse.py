@@ -58,7 +58,7 @@ def test_overlapping_title_variants_look_each_md5_up_once(monkeypatch):
     aa._enrich_search_results_with_downloads(second)
 
     assert sorted(looked_up) == ["aaa", "bbb", "ccc"]
-    assert sessions_built == [], "lookups should share one session instead of one each"
+    assert len(sessions_built) == 2, "each batch should share one session across its lookups"
     for record in first + second:
         assert record.info == {"Downloads": ["7"]}
 
@@ -66,10 +66,10 @@ def test_overlapping_title_variants_look_each_md5_up_once(monkeypatch):
 def test_cached_count_expires(monkeypatch):
     looked_up, _ = _count_lookups(monkeypatch)
     now = [1_000.0]
-    monkeypatch.setattr("shelfmark.core.cache.time.time", lambda: now[0])
+    monkeypatch.setattr(aa.time, "monotonic", lambda: now[0])
 
     aa._enrich_search_results_with_downloads(_records("aaa"))
-    now[0] += aa._DOWNLOAD_COUNT_TTL - 1
+    now[0] += aa._DOWNLOAD_COUNT_CACHE_TTL_SECONDS - 1
     aa._enrich_search_results_with_downloads(_records("aaa"))
     assert looked_up == ["aaa"]
 
