@@ -57,6 +57,7 @@ describe('recordSearch', () => {
 
     expect(parsed.searchBy).toBe('title');
     expect(parsed.searchInput).toBe('Night: A Memoir & More');
+    expect(parsed.resultsTab).toBe('files');
     expect(parsed.hasSearchParams).toBe(true);
   });
 

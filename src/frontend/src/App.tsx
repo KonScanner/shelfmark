@@ -994,6 +994,7 @@ function App() {
       searchModeOverride?: SearchMode;
       providerOverride?: string;
       sort?: string;
+      resultsTab?: ResultsTab;
       /** False keeps the file rows (a Books sort change reuses the same query). */
       refreshFiles?: boolean;
     }) => {
@@ -1023,9 +1024,12 @@ function App() {
       } else if (opts.refreshFiles ?? true) {
         // Every search runs the file sources again, so searching again is the retry.
         searchFiles(filesParams, {
-          start: mode === 'direct' || config?.files_search_timing !== 'on_open',
+          start:
+            mode === 'direct' ||
+            opts.resultsTab === 'files' ||
+            config?.files_search_timing !== 'on_open',
         });
-        setResultsTab('books');
+        setResultsTab(opts.resultsTab ?? 'books');
       }
     },
     [refreshRequestPolicy, handleSearch, config, effectiveContentType, resetFiles, searchFiles],
@@ -2160,6 +2164,7 @@ function App() {
         searchBy: effectiveActiveQueryTarget,
         contentType,
         combinedMode,
+        resultsTab,
         advancedFilters,
         defaultSort: urlHashDefaultSort,
         defaultFormats: supportedFormats,
@@ -2169,6 +2174,7 @@ function App() {
       effectiveActiveQueryTarget,
       contentType,
       combinedMode,
+      resultsTab,
       advancedFilters,
       urlHashDefaultSort,
       supportedFormats,

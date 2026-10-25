@@ -14,6 +14,7 @@ export interface ParsedUrlSearch {
    * the live targets, so a custom provider's camelCase key still resolves.
    */
   searchBy?: string;
+  resultsTab?: 'books' | 'files';
   hasSearchParams: boolean;
 }
 
@@ -62,6 +63,7 @@ export function parseUrlSearchParams(searchParams: URLSearchParams): ParsedUrlSe
     contentType: contentTypeParam.contentType,
     combinedMode: contentTypeParam.combinedMode,
     searchBy: searchByParam || undefined,
+    resultsTab: searchParams.get('results') === 'files' ? 'files' : undefined,
     hasSearchParams: false,
   };
 

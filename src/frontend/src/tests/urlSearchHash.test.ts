@@ -17,6 +17,19 @@ describe('buildUrlSearchHash', () => {
     expect(new URLSearchParams(hash).get('content_type')).toBe('audiobook');
   });
 
+  it('keeps the files tab in shared search links', () => {
+    const hash = buildUrlSearchHash({
+      queryValue: 'dune',
+      searchBy: 'title',
+      contentType: 'ebook',
+      combinedMode: false,
+      resultsTab: 'files',
+      advancedFilters: {},
+    });
+
+    expect(new URLSearchParams(hash).get('results')).toBe('files');
+  });
+
   it('omits content_type when it is the ebook default', () => {
     const hash = buildUrlSearchHash({
       queryValue: 'dune',

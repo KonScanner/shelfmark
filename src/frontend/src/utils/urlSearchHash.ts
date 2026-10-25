@@ -11,6 +11,7 @@ export interface UrlSearchHashState {
   searchBy: string;
   contentType: ContentType;
   combinedMode: boolean;
+  resultsTab?: 'books' | 'files';
   advancedFilters: Partial<AdvancedFilterState>;
   /**
    * Sort the app would apply on its own (the provider's default in Universal mode,
@@ -63,6 +64,9 @@ export const buildUrlSearchHash = (state: UrlSearchHashState): string => {
   }
   if (state.searchBy && state.searchBy !== 'general') {
     params.set('search_by', state.searchBy);
+  }
+  if (state.resultsTab === 'files') {
+    params.set('results', 'files');
   }
   if (state.combinedMode) {
     params.set('content_type', 'combined');

@@ -88,4 +88,13 @@ describe('parseUrlSearchParams', () => {
 
     expect(parsed.searchBy).toBe(undefined);
   });
+
+  it('parses the files results tab and ignores unsupported tabs', () => {
+    expect(parseUrlSearchParams(new URLSearchParams('q=dune&results=files')).resultsTab).toBe(
+      'files',
+    );
+    expect(parseUrlSearchParams(new URLSearchParams('q=dune&results=other')).resultsTab).toBe(
+      undefined,
+    );
+  });
 });

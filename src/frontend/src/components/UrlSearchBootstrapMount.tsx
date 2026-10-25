@@ -40,6 +40,7 @@ interface UrlSearchBootstrapMountProps {
     searchModeOverride?: SearchMode;
     fieldValues?: Record<string, string | number | boolean>;
     sort?: string;
+    resultsTab?: 'books' | 'files';
   }) => void;
   onComplete: () => void;
 }
@@ -205,6 +206,7 @@ export const UrlSearchBootstrapMount = ({
       searchModeOverride: parsedSearchMode,
       fieldValues: urlFieldValues,
       sort: parsedParams?.advancedFilters?.sort,
+      resultsTab: parsedParams.resultsTab,
     });
   });
 
