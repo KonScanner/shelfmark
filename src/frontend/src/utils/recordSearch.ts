@@ -66,7 +66,12 @@ export const pickRecordSearch = (
  * field) falls back to a General search for the value.
  */
 export const buildRecordSearchHash = (field: RecordSearchField, value: string): string =>
-  new URLSearchParams({ q: value, search_by: field, results: 'files' }).toString();
+  new URLSearchParams({
+    q: value,
+    search_by: field,
+    content_type: 'ebook',
+    results: 'files',
+  }).toString();
 
 /**
  * Link for a file title that searches by the cleaned title, or null when there is no
